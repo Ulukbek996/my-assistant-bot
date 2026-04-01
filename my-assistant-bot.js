@@ -84,12 +84,16 @@ Review the following Facebook post draft against these criteria:
 4. Appropriate length (50–300 words)
 5. No grammatical errors
 
-Respond with:
-- A brief evaluation for each criterion (pass/fail + one sentence)
-- A "Suggested post:" section with an improved version (if any changes are needed)
-- End with: "Reply *ok* to publish, or send me your corrections."
+Respond ENTIRELY in Russian (feedback, evaluation, everything) — EXCEPT the "Suggested post:" section which must always be in English, since it will be published to an American audience on Facebook.
 
-Respond in the same language the user used in the post.`;
+Respond with:
+- A brief evaluation for each criterion in Russian (pass/fail + one sentence)
+- A "Suggested post:" section with an improved version in English (always include this section)
+- End with: "Ответьте *ok* для публикации или напишите правки."`;
+
+const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+
+The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English — nothing else, no explanations, no labels.`;
 
 async function reviewPost(postText) {
   const response = await anthropic.messages.create({
@@ -99,6 +103,16 @@ async function reviewPost(postText) {
     messages: [{ role: 'user', content: postText }],
   });
   return response.content[0].text;
+}
+
+async function applyCorrection(originalText, correction) {
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    system: POST_APPLY_CORRECTION_PROMPT,
+    messages: [{ role: 'user', content: `Original post:\n${originalText}\n\nCorrections: ${correction}` }],
+  });
+  return response.content[0].text.trim();
 }
 
 async function publishToFacebook(text, media) {
@@ -224,8 +238,16 @@ bot.on('message', async (msg) => {
         bot.sendMessage(chatId, `Failed to publish to Facebook: ${err.response?.data?.error?.message || err.message}`);
       }
     } else {
-      // User sent corrections — treat the new text as an updated post
-      await handlePostFlow(chatId, text, session.pendingMedia);
+      // User sent corrections — apply them to the existing post and re-review
+      postSessions.delete(chatId);
+      bot.sendChatAction(chatId, 'typing');
+      try {
+        const updatedText = await applyCorrection(session.text, text);
+        await handlePostFlow(chatId, updatedText, session.pendingMedia);
+      } catch (err) {
+        console.error('Error applying correction:', err.message);
+        bot.sendMessage(chatId, 'Something went wrong while applying corrections. Please try again.');
+      }
     }
     return;
   }
