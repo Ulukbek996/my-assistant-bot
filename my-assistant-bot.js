@@ -43,8 +43,8 @@ const BRAND_KNOWLEDGE = `## Hammer Remodeling LLC -- Brand Knowledge
 3. Will take months --> "Complete bathroom remodel in 7-10 days, not months."
 4. Bad quality --> "Our team trained across Europe. Precision is in our DNA."
 
-**Main service:** Bathroom remodel $15,000-$25,000, 7-10 working days
-**Additional services:** Tile installation, flooring (organic only), kitchen (future)
+**Main advertising focus:** Bathroom remodel $15,000-$25,000, 7-10 working days
+**Full scope of work:** Hammer Remodeling does ALL types of remodeling and renovation -- bathroom remodel, kitchen remodel, tile installation, flooring (organic only), full home renovation, commercial/corporate remodeling, and any other remodeling work. The company takes on any remodeling project.
 
 **Tone of voice -- USE these phrases and style:**
 - "Your bathroom, done right in 10 days."
@@ -63,7 +63,7 @@ const BRAND_KNOWLEDGE = `## Hammer Remodeling LLC -- Brand Knowledge
 - "Quality workmanship" (without specifics)
 - Generic AI-sounding phrases
 
-**CONTENT RULE -- REAL PHOTOS ONLY:** Only use real photos from actual Hammer Remodeling projects. No stock photos, no AI-generated images, no other companies' work. If a photo looks like it may NOT be from an actual Hammer Remodeling project, flag it.
+**CONTENT RULE -- REAL PHOTOS ONLY:** Only use real photos from actual Hammer Remodeling projects. No stock photos, no AI-generated images, no other companies' work. Any photo showing remodeling or construction work -- bathrooms, kitchens, floors, tiles, commercial spaces, or any other renovation work -- is considered relevant and valid content. Only flag photos that are completely unrelated to construction or remodeling (e.g. landscapes, people, food, etc.).
 
 **5 Content types -- always identify which type a post belongs to:**
 1. BEFORE/AFTER -- carousel, demo to done, the main content type
