@@ -84,50 +84,88 @@ Review the following Facebook post draft against these criteria:
 1. Clear and professional tone
 2. Relevant to home remodeling (bathroom/kitchen)
 3. Has a call to action
-4. Appropriate length (50–300 words)
+4. Appropriate length (50-300 words)
 5. No grammatical errors
 
-Respond ENTIRELY in Russian (feedback, evaluation, everything) — EXCEPT the "Suggested post:" section which must always be in English, since it will be published to an American audience on Facebook.
+Respond ENTIRELY in Russian (feedback, evaluation, everything) -- EXCEPT the "Suggested post:" section which must always be in English, since it will be published to an American audience on Facebook.
 
 Respond with:
 - A brief evaluation for each criterion in Russian (pass/fail + one sentence)
 - A "Suggested post:" section with an improved version in English (always include this section)
 - End with: "Ответьте *ok* для публикации или напишите правки."`;
 
-const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are reviewing a Facebook post for Hammer Remodeling LLC — a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest like a professional marketer. Do not give empty praise.
+// Shared marketing rules injected into both photo-related prompts
+const MARKETING_RULES = `## 7 Core Marketing Rules (apply strictly when analyzing any content)
 
-The user has submitted a photo with a caption. Analyze both together.
+RULE 1 - MOVEMENT: Text must flow left-to-right naturally using rhythm, verbs, lists, and paragraphs. One image = one idea. The image must be understood within 3 seconds -- no visual clutter, no competing focal points.
 
-Respond ENTIRELY in Russian — EXCEPT the "Suggested post:" section which must be in English.
+RULE 2 - LEXICON: Never use vague expressions ("quality service", "we care", "best in class", "discounts", "promotions"). Use specific technical terms, concrete numbers, real offers. Example: "Tile install from $12/sq ft" not "affordable prices".
 
-**📸 Анализ фото:**
-1. Качество фото — резкость, освещение, композиция ✅/❌ — одно предложение
-2. Соответствие теме — ванная/кухня, ремонт ✅/❌ — одно предложение
-3. Профессиональный вид — нет лишних предметов, чисто, аккуратно ✅/❌ — одно предложение
-4. Потенциал «до/после» — показывает ли трансформацию или результат ✅/❌ — одно предложение
-5. Эмоциональный отклик — хочется ли это иметь у себя дома ✅/❌ — одно предложение
-6. Соответствие бренду — выглядит ли это как премиальная компания ✅/❌ — одно предложение
+RULE 3 - TARGET AUDIENCE: Content must make northwest Chicago suburbs homeowners feel "they understand me". Reflect their lifestyle, aspirations, and local context. Speak to someone investing in their home, not a generic buyer.
 
-**✍️ Анализ подписи:**
-1. Хук — захватывает ли первая строка внимание ✅/❌ — одно предложение
-2. Ценностное предложение — понятна ли выгода для клиента ✅/❌ — одно предложение
-3. Призыв к действию — конкретный и убедительный ✅/❌ — одно предложение
-4. Хештеги — релевантные, 5–10 штук ✅/❌ — одно предложение
-5. Тон — профессиональный, но тёплый ✅/❌ — одно предложение
-6. Длина — подходящая для Facebook ✅/❌ — одно предложение
-7. Грамматика ✅/❌ — одно предложение
+RULE 4 - FUNNEL & CUSTOMER JOURNEY: Every piece of content is either:
+- TOP OF FUNNEL (awareness/warm-up): show transformation, build trust, share social proof -- no hard sell
+- BOTTOM OF FUNNEL (ready to buy): direct CTA, pricing, contact info, urgency
+Flag which stage this content targets and whether the caption matches it.
 
-**🎯 Общая оценка: X/10**
-Напиши 2–3 предложения: что именно делает этот пост сильным или слабым с маркетинговой точки зрения, и что конкретно повысит его эффективность.
+RULE 5 - CTA DEPTH:
+- Small depth (top of funnel): like, comment, share, save
+- Medium depth (mid funnel): DM, message on Facebook, fill a form on the same platform
+- Large depth (bottom of funnel): call us, visit website, fill a form on external site
+For high-ticket remodeling, warm-up content with small/medium CTA depth must outnumber direct-response posts. Flag if CTA depth is mismatched for the content's funnel stage.
+
+RULE 6 - CONTACT INFO: Only ONE contact method per post. If CTA is "call us" -- show only the phone number. If CTA is "visit our site" -- show only the website URL. Never mix both in the same post.
+
+RULE 7 - PLATFORM ADAPTATION:
+- Facebook: post starts with TEXT. Main message must be in the caption; image is supplementary. CTA button appears bottom-right.
+- Instagram: post starts with IMAGE. Main message should be ON the image itself; caption adds detail.
+Always adapt the caption structure and CTA placement accordingly.`;
+
+const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are reviewing a Facebook post for Hammer Remodeling LLC -- a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest. Do not give empty praise. Flag every rule violation clearly.
+
+${MARKETING_RULES}
+
+The user has submitted a photo with a caption. Analyze both together using the rules above.
+
+Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must be in English.
+
+**Анализ фото:**
+1. Качество фото -- резкость, освещение, композиция (Правило 1) ✅/❌ -- одно предложение
+2. Соответствие теме -- ванная/кухня, ремонт ✅/❌ -- одно предложение
+3. Профессиональный вид -- нет лишних предметов, чисто, аккуратно ✅/❌ -- одно предложение
+4. Потенциал "до/после" -- показывает ли трансформацию или результат ✅/❌ -- одно предложение
+5. Эмоциональный отклик -- хочется ли это иметь у себя дома ✅/❌ -- одно предложение
+6. Соответствие бренду -- выглядит ли это как премиальная компания ✅/❌ -- одно предложение
+
+**Рекомендации по улучшению фото:**
+- Что добавить на изображение: логотип, текст-оверлей, контакты, раскладка "до/после" и т.д.
+- Этап воронки, которому лучше всего соответствует это фото (Правило 4)
+- Подходящая глубина CTA для этого этапа воронки (Правило 5)
+- Адаптация под Facebook vs Instagram: что изменить для каждой платформы (Правило 7)
+
+**Анализ подписи:**
+1. Хук -- захватывает ли первая строка внимание (Правило 1) ✅/❌ -- одно предложение
+2. Лексика -- нет ли размытых слов, есть ли конкретика и цифры (Правило 2) ✅/❌ -- одно предложение
+3. Целевая аудитория -- узнают ли себя жители пригородов Чикаго (Правило 3) ✅/❌ -- одно предложение
+4. Этап воронки -- соответствует ли текст этапу, которому служит фото (Правило 4) ✅/❌ -- одно предложение
+5. Глубина CTA -- соответствует ли глубина действия этапу воронки (Правило 5) ✅/❌ -- одно предложение
+6. Контактная информация -- один способ связи или несколько (Правило 6) ✅/❌ -- одно предложение
+7. Адаптация под Facebook -- текст впереди, образ дополняет (Правило 7) ✅/❌ -- одно предложение
+8. Хештеги -- релевантные, 5-10 штук ✅/❌ -- одно предложение
+9. Тон -- профессиональный, но тёплый ✅/❌ -- одно предложение
+10. Грамматика ✅/❌ -- одно предложение
+
+**Общая оценка: X/10**
+Напиши 2-3 предложения: что именно делает этот пост сильным или слабым с маркетинговой точки зрения и что конкретно повысит его эффективность.
 
 Затем:
-**Suggested post:** (in English — improved version with a strong hook, clear value proposition, specific CTA, and 5–10 hashtags)
+**Suggested post:** (in English -- improved caption following all 7 rules: flows naturally, specific language with numbers, speaks to northwest Chicago suburbs homeowners, matches funnel stage, appropriate CTA depth, single contact method, Facebook-first structure, 5-10 hashtags)
 
 Завершить: "Ответьте *ok* для публикации или напишите правки."`;
 
 const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
 
-The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English — nothing else, no explanations, no labels.`;
+The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English -- nothing else, no explanations, no labels.`;
 
 async function reviewPost(postText) {
   const response = await anthropic.messages.create({
@@ -172,30 +210,38 @@ async function applyCorrection(originalText, correction, imageBase64 = null) {
   return response.content[0].text.trim();
 }
 
-const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are creating Facebook content for Hammer Remodeling LLC — a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest like a professional marketer.
+const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are creating Facebook content for Hammer Remodeling LLC -- a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest. Do not give empty praise.
 
-The user has sent a photo without a caption. Analyze the photo and suggest three caption options.
+${MARKETING_RULES}
 
-Respond ENTIRELY in Russian — EXCEPT the three caption options which must be in English.
+The user has sent a photo without a caption. Analyze the photo using the rules above and suggest three caption options.
 
-**📸 Анализ фото:**
-1. Качество фото — резкость, освещение, композиция ✅/❌ — одно предложение
-2. Соответствие теме — ванная/кухня, ремонт ✅/❌ — одно предложение
-3. Профессиональный вид — нет лишних предметов, чисто, аккуратно ✅/❌ — одно предложение
-4. Потенциал «до/после» — показывает ли трансформацию или результат ✅/❌ — одно предложение
-5. Эмоциональный отклик — хочется ли это иметь у себя дома ✅/❌ — одно предложение
-6. Соответствие бренду — выглядит ли это как премиальная компания ✅/❌ — одно предложение
+Respond ENTIRELY in Russian -- EXCEPT the three caption options which must be in English.
 
-**🎯 Маркетинговый потенциал фото: X/10**
-Напиши 1–2 предложения: насколько это фото эффективно для продвижения и что можно улучшить при съёмке в следующий раз.
+**Анализ фото:**
+1. Качество фото -- резкость, освещение, композиция (Правило 1) ✅/❌ -- одно предложение
+2. Соответствие теме -- ванная/кухня, ремонт ✅/❌ -- одно предложение
+3. Профессиональный вид -- нет лишних предметов, чисто, аккуратно ✅/❌ -- одно предложение
+4. Потенциал "до/после" -- показывает ли трансформацию или результат ✅/❌ -- одно предложение
+5. Эмоциональный отклик -- хочется ли это иметь у себя дома ✅/❌ -- одно предложение
+6. Соответствие бренду -- выглядит ли это как премиальная компания ✅/❌ -- одно предложение
 
-**✍️ Варианты подписи (на английском):**
+**Маркетинговый потенциал фото: X/10**
+Напиши 1-2 предложения: насколько это фото эффективно для продвижения и что можно улучшить при съёмке в следующий раз.
 
-1. [Professional tone — strong hook, clear value proposition, specific CTA, 5–10 hashtags]
+**Рекомендации по улучшению:**
+- Что добавить на изображение: логотип, текст-оверлей, контакты, раскладка "до/после" и т.д.
+- Этап воронки, которому лучше всего соответствует это фото (Правило 4)
+- Подходящая глубина CTA для этого этапа воронки (Правило 5)
+- Адаптация под Facebook vs Instagram: что изменить для каждой платформы (Правило 7)
 
-2. [Story-driven/emotional tone — connects with homeowner aspirations, specific CTA, 5–10 hashtags]
+**Варианты подписи (на английском):**
 
-3. [Short and punchy — bold opener, one-line value prop, urgent CTA, 5–10 hashtags]
+1. [Professional tone -- strong hook with a specific detail or number, clear value proposition, CTA matching funnel stage, 5-10 hashtags]
+
+2. [Story-driven/emotional tone -- connects with northwest Chicago suburbs homeowner aspirations, CTA matching funnel stage, 5-10 hashtags]
+
+3. [Short and punchy -- bold opener, one concrete value statement, urgent CTA, 5-10 hashtags]
 
 Завершить (на русском): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
 
@@ -286,7 +332,7 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// /clear command — reset conversation history
+// /clear command -- reset conversation history
 bot.onText(/\/clear/, (msg) => {
   const chatId = msg.chat.id;
   conversations.set(chatId, []);
@@ -298,7 +344,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Available commands:*\n\n/start — Welcome message\n/clear — Clear conversation history\n/post [text] — Review & publish a post to Facebook\n/help — Show this message\n\n*What I can do:*\n• Answer any question\n• Write marketing content for Hammer Remodeling\n• Draft social media posts & ads\n• Review & publish posts to Facebook (with photos/videos)\n• Translate text\n• Make lists & reminders\n• Analyze competitors & market trends\n• And much more — just ask!`,
+    `*Available commands:*\n\n/start -- Welcome message\n/clear -- Clear conversation history\n/post [text] -- Review & publish a post to Facebook\n/help -- Show this message\n\n*What I can do:*\n• Answer any question\n• Write marketing content for Hammer Remodeling\n• Draft social media posts & ads\n• Review & publish posts to Facebook (with photos/videos)\n• Translate text\n• Make lists & reminders\n• Analyze competitors & market trends\n• And much more -- just ask!`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -315,7 +361,7 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Handle photo — download first, then branch on caption presence
+  // Handle photo -- download first, then branch on caption presence
   if (msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     bot.sendChatAction(chatId, 'typing');
@@ -331,10 +377,10 @@ bot.on('message', async (msg) => {
     }
 
     if (msg.caption) {
-      // Photo WITH caption — vision-review and start post flow
+      // Photo WITH caption -- vision-review and start post flow
       await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId, imageBase64 });
     } else {
-      // Photo WITHOUT caption — analyze and suggest 3 captions
+      // Photo WITHOUT caption -- analyze and suggest 3 captions
       try {
         const suggestionResponse = await analyzePhotoAndSuggestCaptions(imageBase64);
         const captions = extractCaptions(suggestionResponse);
@@ -348,7 +394,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Handle video with caption — treat as a post draft
+  // Handle video with caption -- treat as a post draft
   if (msg.video && msg.caption) {
     await handlePostFlow(chatId, msg.caption, { type: 'video', fileId: msg.video.file_id });
     return;
@@ -367,13 +413,13 @@ bot.on('message', async (msg) => {
       captionSessions.delete(chatId);
       await handlePostFlow(chatId, session.captions[picked], session.pendingMedia);
     } else {
-      // Treat as correction instructions — re-generate captions with this feedback
+      // Treat as correction instructions -- re-generate captions with this feedback
       captionSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
         const updatedResponse = await anthropic.messages.create({
           model: CLAUDE_MODEL,
-          max_tokens: 1024,
+          max_tokens: 2048,
           system: PHOTO_CAPTION_SUGGEST_PROMPT,
           messages: [{
             role: 'user',
@@ -411,7 +457,7 @@ bot.on('message', async (msg) => {
         bot.sendMessage(chatId, `Failed to publish to Facebook: ${err.response?.data?.error?.message || err.message}`);
       }
     } else {
-      // User sent corrections — apply them to the existing post and re-review
+      // User sent corrections -- apply them to the existing post and re-review
       postSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
