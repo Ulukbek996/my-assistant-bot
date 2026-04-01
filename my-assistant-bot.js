@@ -109,15 +109,21 @@ RULE 7 - PLATFORM ADAPTATION:
 - Instagram: post starts with IMAGE. Main message should be ON the image itself; caption adds detail.
 Always adapt the caption structure and CTA placement accordingly.`;
 
-// Brand checklist appended to review outputs (referenced in prompts)
-const BRAND_CHECKLIST = `**Проверка бренда:**
-- Отражает ли пост хотя бы один из 3 столпов бренда (качество/скорость/прозрачность)? ✅/❌
-- Затрагивает ли хотя бы один страх клиента? ✅/❌
-- Правильный ли тон (нет корпоративных клише, нет пустых фраз)? ✅/❌
-- Использованы ли правильные хештеги (обязательный набор + локальные)? ✅/❌
-- Упомянут ли конкретный пригород (не просто "Chicago")? ✅/❌
-- Понятен ли CTA и подходит ли он для дорогостоящей услуги? ✅/❌
-- Определён ли тип контента (before/after, process, educational, social proof, offer)? ✅/❌`;
+// Instruction block for clarifying questions -- shared by both photo prompts
+const CLARIFYING_QUESTIONS_RULE = `**Уточняющие вопросы:**
+Если для более точных рекомендаций тебе не хватает информации, задай максимум 1-2 самых важных вопроса в самом конце ответа. Примеры: "Это жилой или коммерческий объект?", "Это фото до или после ремонта?", "Для какого района этот пост?", "Есть ли фото 'до' для сравнения?", "Это ванная или кухня?". Задавай вопросы только если ответ реально изменит рекомендации. Если всё ясно из фото -- вопросы не задавай.`;
+
+// Image editing section instruction -- shared by both photo prompts
+const IMAGE_EDITING_SECTION = `**🖼️ Что изменить в самом изображении:**
+Дай конкретные рекомендации арт-директора. Для каждого применимого пункта укажи точное действие, текст и место на фото:
+- Логотип/водяной знак: нужен ли, куда поставить (например: "Логотип Hammer Remodeling -- нижний правый угол, 15% ширины, белый с тенью")
+- Текст-оверлей: нужен ли, какой именно текст и где разместить (например: "Крупный текст 'Done in 10 Days' -- нижняя треть, белый жирный шрифт на полупрозрачной тёмной подложке")
+- Кадрирование: нужно ли обрезать или перекадрировать (например: "Обрезать 10% снизу -- убрать строительный мусор в углу")
+- Плашка 'до/после': нужна ли и как оформить
+- Контактная информация на фото: что именно и где (например: "Номер телефона мелким шрифтом -- нижний левый угол")
+- Цвет/яркость: нужна ли коррекция (например: "Повысить яркость на 20%, добавить насыщенность -- фото выглядит тусклым")
+- Графический элемент: стрелка, бейдж, ценовой callout (например: "Бейдж 'Complete Remodel from $15K' -- верхний левый угол, контрастный цвет")
+- Ретушь: нужна ли профессиональная обработка и что именно исправить`;
 
 // ---------------------------------------------------------------------------
 
@@ -185,14 +191,15 @@ Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must b
 **Анализ фото:**
 1. Реальное фото с объекта -- не сток, не AI, не чужой проект? ✅/❌ -- одно предложение
 2. Качество -- резкость, освещение, композиция (Правило 1) ✅/❌ -- одно предложение
-3. Соответствие теме -- ванная/кухня, ремонт ✅/❌ -- одно предложение
+3. Соответствие теме -- ремонтные/строительные работы ✅/❌ -- одно предложение
 4. Профессиональный вид -- нет лишних предметов, чисто, аккуратно ✅/❌ -- одно предложение
 5. Потенциал "до/после" -- показывает ли трансформацию или результат ✅/❌ -- одно предложение
-6. Эмоциональный отклик -- хочется ли это иметь у себя дома ✅/❌ -- одно предложение
+6. Эмоциональный отклик -- хочется ли это иметь у себя ✅/❌ -- одно предложение
 7. Соответствие бренду -- выглядит ли это как премиальная компания ✅/❌ -- одно предложение
 
-**Рекомендации по улучшению фото:**
-- Что добавить на изображение: логотип, текст-оверлей, контакты, раскладка "до/после" и т.д.
+${IMAGE_EDITING_SECTION}
+
+**Рекомендации по продвижению:**
 - Тип контента: к какому из 5 типов подходит это фото (before/after, process, educational, social proof, offer)?
 - Этап воронки и подходящая глубина CTA (Правила 4-5)
 - Адаптация под Facebook vs Instagram (Правило 7)
@@ -218,6 +225,8 @@ Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must b
 Затем:
 **Suggested post:** (in English -- improved caption following all brand rules and marketing principles: leads with a strong hook, includes at least one brand pillar, addresses a client fear, mentions a specific suburb, uses specific numbers/details, appropriate CTA depth, single contact method, correct hashtags, no vague phrases)
 
+${CLARIFYING_QUESTIONS_RULE}
+
 Завершить: "Ответьте *ok* для публикации или напишите правки."`;
 
 const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC.
@@ -239,18 +248,19 @@ Respond ENTIRELY in Russian -- EXCEPT the three caption options which must be in
 **Анализ фото:**
 1. Реальное фото с объекта -- не сток, не AI, не чужой проект? ✅/❌ -- одно предложение
 2. Качество -- резкость, освещение, композиция (Правило 1) ✅/❌ -- одно предложение
-3. Соответствие теме -- ванная/кухня, ремонт ✅/❌ -- одно предложение
+3. Соответствие теме -- ремонтные/строительные работы ✅/❌ -- одно предложение
 4. Профессиональный вид -- нет лишних предметов, чисто, аккуратно ✅/❌ -- одно предложение
 5. Потенциал "до/после" -- показывает ли трансформацию или результат ✅/❌ -- одно предложение
-6. Эмоциональный отклик -- хочется ли это иметь у себя дома ✅/❌ -- одно предложение
+6. Эмоциональный отклик -- хочется ли это иметь у себя ✅/❌ -- одно предложение
 7. Соответствие бренду -- выглядит ли это как премиальная компания ✅/❌ -- одно предложение
 
 **Маркетинговый потенциал фото: X/10**
 Напиши 1-2 предложения: насколько это фото эффективно для продвижения и что можно улучшить при съёмке в следующий раз.
 
-**Рекомендации по улучшению:**
+${IMAGE_EDITING_SECTION}
+
+**Рекомендации по продвижению:**
 - Тип контента: к какому из 5 типов подходит это фото (before/after, process, educational, social proof, offer)?
-- Что добавить на изображение: логотип, текст-оверлей, контакты, раскладка "до/после" и т.д.
 - Этап воронки и подходящая глубина CTA (Правила 4-5)
 - Адаптация под Facebook vs Instagram (Правило 7)
 
@@ -265,6 +275,8 @@ Respond ENTIRELY in Russian -- EXCEPT the three caption options which must be in
 2. [Story-driven -- connects with a northwest Chicago suburbs homeowner's aspiration, brand pillar, specific suburb name, CTA matching funnel stage, correct hashtags]
 
 3. [Short and punchy -- bold opener, one concrete brand pillar statement, urgent CTA, correct hashtags]
+
+${CLARIFYING_QUESTIONS_RULE}
 
 Завершить (на русском): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
 
@@ -514,7 +526,7 @@ bot.on('message', async (msg) => {
       captionSessions.delete(chatId);
       await handlePostFlow(chatId, session.captions[picked], session.pendingMedia);
     } else {
-      // Treat as correction instructions -- re-generate captions with this feedback
+      // Treat as correction instructions or clarifying question answers -- re-generate captions
       captionSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
@@ -526,7 +538,7 @@ bot.on('message', async (msg) => {
             role: 'user',
             content: [
               { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: session.pendingMedia.imageBase64 } },
-              { type: 'text', text: `Please suggest three new caption options. User feedback: ${text}` },
+              { type: 'text', text: `Additional context / feedback from user: ${text}` },
             ],
           }],
         });
@@ -558,7 +570,7 @@ bot.on('message', async (msg) => {
         bot.sendMessage(chatId, `Failed to publish to Facebook: ${err.response?.data?.error?.message || err.message}`);
       }
     } else {
-      // User sent corrections -- apply them to the existing post and re-review
+      // User sent corrections or answered clarifying questions -- re-apply and re-review
       postSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
