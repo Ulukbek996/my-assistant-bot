@@ -479,13 +479,13 @@ ${BRAND_KNOWLEDGE}
 
 The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English -- nothing else, no explanations, no labels. The updated post must still follow brand rules: no vague phrases, at least one brand pillar, specific suburb if relevant, correct hashtag sets.`;
 
-const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert for Hammer Remodeling LLC. Photo without caption -- analyze and suggest 3 options. Busy creative director style: short, direct, punchy. One sentence per point.
+const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert for Hammer Remodeling LLC. Photo without caption -- analyze and write the single best caption. Busy creative director style: short, direct, punchy. One sentence per point.
 
 ${BRAND_KNOWLEDGE}
 
 ${MARKETING_RULES}
 
-Respond ENTIRELY in Russian -- EXCEPT the three caption options which must be in English.
+Respond ENTIRELY in Russian -- EXCEPT the caption itself which must be in English.
 
 **Фото:**
 1. Реальное фото с объекта ✅/❌
@@ -505,17 +505,12 @@ ${IMAGE_EDITING_SECTION}
 - Воронка + глубина CTA (Правила 4-5)
 - Facebook vs Instagram (Правило 7)
 
-**Варианты подписи (на английском) -- каждый: столп бренда + конкретика + правильные хештеги + CTA по воронке**
-
-1. [Прямой -- сильный хук с деталью/цифрой, страх клиента, CTA]
-
-2. [Story-driven -- история жителя пригорода Чикаго, конкретный пригород, CTA]
-
-3. [Короткий и дерзкий -- смелый открывашка, один столп бренда, срочный CTA]
+**Предлагаемая подпись:**
+[Single best English caption: strong hook, brand pillar, specific detail or number, CTA matching funnel stage, correct hashtags. No vague phrases.]
 
 ${CLARIFYING_QUESTIONS_RULE}
 
-Завершить (на русском): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
+Завершить (на русском): "Если не подходит -- напишите что изменить."`;
 
 // ---------------------------------------------------------------------------
 // Claude helpers
@@ -580,9 +575,13 @@ async function analyzePhotoAndSuggestCaptions(imageBase64) {
   return response.content[0].text;
 }
 
-function extractCaptions(responseText) {
-  const matches = [...responseText.matchAll(/^\s*\d+\.\s+(.+?)(?=\n\s*\d+\.|\n\n[^\d]|$)/gms)];
-  return matches.map(m => m[1].trim()).filter(c => c.length > 40);
+function extractCaption(responseText) {
+  // Try to grab the text after the "Предлагаемая подпись:" header
+  const match = responseText.match(/\*\*Предлагаемая подпись:\*\*\s*\n([\s\S]*?)(?=\n\n|\n\*\*|$)/);
+  if (match) return match[1].trim();
+  // Fallback: last line that contains hashtags and is long enough to be a caption
+  const lines = responseText.split('\n').filter(l => l.includes('#') && l.length > 40);
+  return lines[lines.length - 1]?.trim() || '';
 }
 
 function getHistory(chatId) {
@@ -711,8 +710,8 @@ bot.on('message', async (msg) => {
       // Photo WITHOUT caption → caption suggestions
       try {
         const suggestionResponse = await analyzePhotoAndSuggestCaptions(imageBase64);
-        const captions = extractCaptions(suggestionResponse);
-        captionSessions.set(chatId, { captions, pendingMedia: { type: 'photo', fileId, imageBase64 } });
+        const caption = extractCaption(suggestionResponse);
+        captionSessions.set(chatId, { caption, pendingMedia: { type: 'photo', fileId, imageBase64 } });
         await bot.sendMessage(chatId, suggestionResponse, { parse_mode: 'Markdown' });
       } catch (err) {
         console.error('Error suggesting captions:', err.message);
@@ -791,7 +790,7 @@ bot.on('message', async (msg) => {
   if (captionSessions.has(chatId)) {
     const session = captionSessions.get(chatId);
 
-    // Check if user is triggering a review interview instead of picking a caption
+    // Check if user is triggering a review interview instead
     if (isReviewRequest(text)) {
       captionSessions.delete(chatId);
       interviewSessions.set(chatId, { step: 1, answers: [], pendingMedia: session.pendingMedia });
@@ -799,13 +798,14 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    const picked = { '1': 0, '2': 1, '3': 2 }[text.trim()];
+    const normalized = text.trim().toLowerCase();
 
-    if (picked !== undefined && session.captions[picked]) {
+    if (normalized === 'ok' || normalized === 'ок') {
+      // User approved the caption -- move to post review flow
       captionSessions.delete(chatId);
-      await handlePostFlow(chatId, session.captions[picked], session.pendingMedia);
+      await handlePostFlow(chatId, session.caption, session.pendingMedia);
     } else {
-      // Correction / clarifying answer -- re-generate captions
+      // Any other reply is a correction request -- regenerate with feedback
       captionSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
@@ -817,16 +817,16 @@ bot.on('message', async (msg) => {
             role: 'user',
             content: [
               { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: session.pendingMedia.imageBase64 } },
-              { type: 'text', text: `Additional context / feedback: ${text}` },
+              { type: 'text', text: `Correction request: ${text}` },
             ],
           }],
         });
         const newResponse = updatedResponse.content[0].text;
-        const newCaptions = extractCaptions(newResponse);
-        captionSessions.set(chatId, { captions: newCaptions, pendingMedia: session.pendingMedia });
+        const newCaption = extractCaption(newResponse);
+        captionSessions.set(chatId, { caption: newCaption, pendingMedia: session.pendingMedia });
         await bot.sendMessage(chatId, newResponse, { parse_mode: 'Markdown' });
       } catch (err) {
-        console.error('Error regenerating captions:', err.message);
+        console.error('Error regenerating caption:', err.message);
         bot.sendMessage(chatId, 'Something went wrong. Please try again.');
       }
     }
