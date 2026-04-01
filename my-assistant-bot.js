@@ -15,8 +15,11 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const conversations = new Map();
 
 // Pending post sessions: chatId -> { text, pendingMedia }
-// pendingMedia: null | { type: 'photo'|'video', fileId }
+// pendingMedia: null | { type: 'photo'|'video', fileId, imageBase64? }
 const postSessions = new Map();
+
+// Caption selection sessions (photo without caption): chatId -> { captions: [str, str, str], pendingMedia }
+const captionSessions = new Map();
 
 const SYSTEM_PROMPT = `You are a smart personal assistant for Ulik. You help with any everyday tasks and also have deep knowledge about Hammer Remodeling LLC for marketing tasks.
 
@@ -161,6 +164,49 @@ async function applyCorrection(originalText, correction, imageBase64 = null) {
   return response.content[0].text.trim();
 }
 
+const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a social media content creator for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+
+The user has sent a photo without a caption. Analyze the photo and respond ENTIRELY in Russian — EXCEPT the three caption options which must be in English.
+
+Respond with:
+
+**Анализ фото:**
+1. Соответствие теме — подходит ли фото для ремонта ванной/кухни? (✅/❌ + одно предложение)
+2. Качество фото — резкость, освещение, композиция (✅/❌ + одно предложение)
+
+**Варианты подписи (на английском):**
+
+1. [first caption option — professional tone, includes call to action and hashtags]
+
+2. [second caption option — warmer/story-driven tone, includes call to action and hashtags]
+
+3. [third caption option — short and punchy, includes call to action and hashtags]
+
+End with (in Russian): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
+
+async function analyzePhotoAndSuggestCaptions(imageBase64) {
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    system: PHOTO_CAPTION_SUGGEST_PROMPT,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
+        { type: 'text', text: 'Please analyze this photo and suggest three caption options.' },
+      ],
+    }],
+  });
+  return response.content[0].text;
+}
+
+// Extract the three numbered captions from Claude's suggestion response
+function extractCaptions(responseText) {
+  const matches = [...responseText.matchAll(/^\s*\d+\.\s+(.+?)(?=\n\s*\d+\.|\n\n[^\d]|$)/gms)];
+  // Filter out very short matches that are likely analysis lines, not captions
+  return matches.map(m => m[1].trim()).filter(c => c.length > 40);
+}
+
 async function publishToFacebook(text, media) {
   if (media) {
     if (media.type === 'photo') {
@@ -254,18 +300,35 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Handle photo with caption — download, vision-review, and treat as a post draft
-  if (msg.photo && msg.caption) {
+  // Handle photo — download first, then branch on caption presence
+  if (msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     bot.sendChatAction(chatId, 'typing');
+    let imageBase64;
     try {
       const fileLink = await bot.getFileLink(fileId);
       const imageData = await axios.get(fileLink, { responseType: 'arraybuffer' });
-      const imageBase64 = Buffer.from(imageData.data).toString('base64');
-      await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId, imageBase64 });
+      imageBase64 = Buffer.from(imageData.data).toString('base64');
     } catch (err) {
       console.error('Error downloading photo:', err.message);
       bot.sendMessage(chatId, 'Could not download the photo. Please try again.');
+      return;
+    }
+
+    if (msg.caption) {
+      // Photo WITH caption — vision-review and start post flow
+      await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId, imageBase64 });
+    } else {
+      // Photo WITHOUT caption — analyze and suggest 3 captions
+      try {
+        const suggestionResponse = await analyzePhotoAndSuggestCaptions(imageBase64);
+        const captions = extractCaptions(suggestionResponse);
+        captionSessions.set(chatId, { captions, pendingMedia: { type: 'photo', fileId, imageBase64 } });
+        await bot.sendMessage(chatId, suggestionResponse, { parse_mode: 'Markdown' });
+      } catch (err) {
+        console.error('Error suggesting captions:', err.message);
+        bot.sendMessage(chatId, 'Something went wrong while analyzing the photo. Please try again.');
+      }
     }
     return;
   }
@@ -278,6 +341,44 @@ bot.on('message', async (msg) => {
 
   // Skip commands (handled above) and non-text messages
   if (!text || text.startsWith('/')) return;
+
+  // If there's an active caption selection session, handle pick or correction
+  if (captionSessions.has(chatId)) {
+    const session = captionSessions.get(chatId);
+    const pick = text.trim();
+    const picked = { '1': 0, '2': 1, '3': 2 }[pick];
+
+    if (picked !== undefined && session.captions[picked]) {
+      captionSessions.delete(chatId);
+      await handlePostFlow(chatId, session.captions[picked], session.pendingMedia);
+    } else {
+      // Treat as correction instructions — re-generate captions with this feedback
+      captionSessions.delete(chatId);
+      bot.sendChatAction(chatId, 'typing');
+      try {
+        const updatedResponse = await anthropic.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 1024,
+          system: PHOTO_CAPTION_SUGGEST_PROMPT,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: session.pendingMedia.imageBase64 } },
+              { type: 'text', text: `Please suggest three new caption options. User feedback: ${text}` },
+            ],
+          }],
+        });
+        const newResponse = updatedResponse.content[0].text;
+        const newCaptions = extractCaptions(newResponse);
+        captionSessions.set(chatId, { captions: newCaptions, pendingMedia: session.pendingMedia });
+        await bot.sendMessage(chatId, newResponse, { parse_mode: 'Markdown' });
+      } catch (err) {
+        console.error('Error regenerating captions:', err.message);
+        bot.sendMessage(chatId, 'Something went wrong. Please try again.');
+      }
+    }
+    return;
+  }
 
   // If there's an active post session, handle approval or correction
   if (postSessions.has(chatId)) {
