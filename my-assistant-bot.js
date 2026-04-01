@@ -1,14 +1,22 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
+const axios = require('axios');
 
 const BOT_TOKEN = '8794427596:AAEVIDJFLJHb8tWjwKZ0aHMpCUXOExrQzRg';
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+
+const FB_PAGE_ID = '924698817396016';
+const FB_PAGE_ACCESS_TOKEN = 'EAA98xKtbrZCYBREQnsrBFt6uSbO6pPwmrfE4vZAgjJQpj8OdxKhTRXGT6hX1ZBnZCzuaqAWZCArBkt7DAA7mz5p7GLonHyNwj719DS8Wp1sXnmRZASMIHYl8j0Gjjjm5hOnxSrquTzi9No4K42NDJVwmTUjjqZCsNZB6EYiCF0ikOZBDxCkq7ZBkstsZC6k0jOsEWZCGRTj1mcRBopt5ZBebdZAeTEKSVcMRKa7Qp9GafwAJfF0g8ZD';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Conversation history per chat
 const conversations = new Map();
+
+// Pending post sessions: chatId -> { text, pendingMedia }
+// pendingMedia: null | { type: 'photo'|'video', fileId }
+const postSessions = new Map();
 
 const SYSTEM_PROMPT = `You are a smart personal assistant for Ulik. You help with any everyday tasks and also have deep knowledge about Hammer Remodeling LLC for marketing tasks.
 
@@ -67,6 +75,84 @@ async function askClaude(chatId, userMessage) {
   return assistantMessage;
 }
 
+const POST_REVIEW_PROMPT = `You are a social media content reviewer for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+
+Review the following Facebook post draft against these criteria:
+1. Clear and professional tone
+2. Relevant to home remodeling (bathroom/kitchen)
+3. Has a call to action
+4. Appropriate length (50–300 words)
+5. No grammatical errors
+
+Respond with:
+- A brief evaluation for each criterion (pass/fail + one sentence)
+- A "Suggested post:" section with an improved version (if any changes are needed)
+- End with: "Reply *ok* to publish, or send me your corrections."
+
+Respond in the same language the user used in the post.`;
+
+async function reviewPost(postText) {
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    system: POST_REVIEW_PROMPT,
+    messages: [{ role: 'user', content: postText }],
+  });
+  return response.content[0].text;
+}
+
+async function publishToFacebook(text, media) {
+  if (media) {
+    if (media.type === 'photo') {
+      // Upload photo and attach to post
+      const fileLink = await bot.getFileLink(media.fileId);
+      const imageData = await axios.get(fileLink, { responseType: 'arraybuffer' });
+      const formData = new (require('form-data'))();
+      formData.append('source', Buffer.from(imageData.data), { filename: 'photo.jpg', contentType: 'image/jpeg' });
+      formData.append('caption', text);
+      formData.append('access_token', FB_PAGE_ACCESS_TOKEN);
+      const res = await axios.post(
+        `https://graph.facebook.com/v19.0/${FB_PAGE_ID}/photos`,
+        formData,
+        { headers: formData.getHeaders() }
+      );
+      return res.data;
+    } else if (media.type === 'video') {
+      // Upload video and attach to post
+      const fileLink = await bot.getFileLink(media.fileId);
+      const videoData = await axios.get(fileLink, { responseType: 'arraybuffer' });
+      const formData = new (require('form-data'))();
+      formData.append('source', Buffer.from(videoData.data), { filename: 'video.mp4', contentType: 'video/mp4' });
+      formData.append('description', text);
+      formData.append('access_token', FB_PAGE_ACCESS_TOKEN);
+      const res = await axios.post(
+        `https://graph.facebook.com/v19.0/${FB_PAGE_ID}/videos`,
+        formData,
+        { headers: formData.getHeaders() }
+      );
+      return res.data;
+    }
+  }
+  // Text-only post
+  const res = await axios.post(
+    `https://graph.facebook.com/v19.0/${FB_PAGE_ID}/feed`,
+    { message: text, access_token: FB_PAGE_ACCESS_TOKEN }
+  );
+  return res.data;
+}
+
+async function handlePostFlow(chatId, text, media = null) {
+  bot.sendChatAction(chatId, 'typing');
+  try {
+    const review = await reviewPost(text);
+    postSessions.set(chatId, { text, pendingMedia: media });
+    await bot.sendMessage(chatId, review, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('Error reviewing post:', err.message);
+    bot.sendMessage(chatId, 'Something went wrong while reviewing the post. Please try again.');
+  }
+}
+
 // /start command
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -89,9 +175,16 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Available commands:*\n\n/start — Welcome message\n/clear — Clear conversation history\n/help — Show this message\n\n*What I can do:*\n• Answer any question\n• Write marketing content for Hammer Remodeling\n• Draft social media posts & ads\n• Translate text\n• Make lists & reminders\n• Analyze competitors & market trends\n• And much more — just ask!`,
+    `*Available commands:*\n\n/start — Welcome message\n/clear — Clear conversation history\n/post [text] — Review & publish a post to Facebook\n/help — Show this message\n\n*What I can do:*\n• Answer any question\n• Write marketing content for Hammer Remodeling\n• Draft social media posts & ads\n• Review & publish posts to Facebook (with photos/videos)\n• Translate text\n• Make lists & reminders\n• Analyze competitors & market trends\n• And much more — just ask!`,
     { parse_mode: 'Markdown' }
   );
+});
+
+// /post command
+bot.onText(/\/post (.+)/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const postText = match[1].trim();
+  await handlePostFlow(chatId, postText);
 });
 
 // Handle all regular messages
@@ -99,8 +192,43 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Skip commands (handled above)
+  // Handle photo with caption — treat as a post draft
+  if (msg.photo && msg.caption) {
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId });
+    return;
+  }
+
+  // Handle video with caption — treat as a post draft
+  if (msg.video && msg.caption) {
+    await handlePostFlow(chatId, msg.caption, { type: 'video', fileId: msg.video.file_id });
+    return;
+  }
+
+  // Skip commands (handled above) and non-text messages
   if (!text || text.startsWith('/')) return;
+
+  // If there's an active post session, handle approval or correction
+  if (postSessions.has(chatId)) {
+    const session = postSessions.get(chatId);
+    const normalized = text.trim().toLowerCase();
+
+    if (normalized === 'ok' || normalized === 'ок') {
+      postSessions.delete(chatId);
+      bot.sendChatAction(chatId, 'typing');
+      try {
+        await publishToFacebook(session.text, session.pendingMedia);
+        bot.sendMessage(chatId, 'Posted to Facebook successfully!');
+      } catch (err) {
+        console.error('Facebook publish error:', err.response?.data || err.message);
+        bot.sendMessage(chatId, `Failed to publish to Facebook: ${err.response?.data?.error?.message || err.message}`);
+      }
+    } else {
+      // User sent corrections — treat the new text as an updated post
+      await handlePostFlow(chatId, text, session.pendingMedia);
+    }
+    return;
+  }
 
   // Show typing indicator
   bot.sendChatAction(chatId, 'typing');
