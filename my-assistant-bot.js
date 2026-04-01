@@ -94,28 +94,36 @@ Respond with:
 - A "Suggested post:" section with an improved version in English (always include this section)
 - End with: "Ответьте *ok* для публикации или напишите правки."`;
 
-const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a social media content reviewer for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are reviewing a Facebook post for Hammer Remodeling LLC — a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest like a professional marketer. Do not give empty praise.
 
-The user has submitted a photo with a caption for a Facebook post. Analyze both together.
+The user has submitted a photo with a caption. Analyze both together.
 
-Respond ENTIRELY in Russian (feedback, evaluation, everything) — EXCEPT the "Suggested post:" section which must always be in English.
+Respond ENTIRELY in Russian — EXCEPT the "Suggested post:" section which must be in English.
 
-Respond with:
+**📸 Анализ фото:**
+1. Качество фото — резкость, освещение, композиция ✅/❌ — одно предложение
+2. Соответствие теме — ванная/кухня, ремонт ✅/❌ — одно предложение
+3. Профессиональный вид — нет лишних предметов, чисто, аккуратно ✅/❌ — одно предложение
+4. Потенциал «до/после» — показывает ли трансформацию или результат ✅/❌ — одно предложение
+5. Эмоциональный отклик — хочется ли это иметь у себя дома ✅/❌ — одно предложение
+6. Соответствие бренду — выглядит ли это как премиальная компания ✅/❌ — одно предложение
 
-**Анализ фото:**
-1. Соответствие теме — подходит ли фото для ремонта ванной/кухни? (✅/❌ + одно предложение)
-2. Качество фото — резкость, освещение, композиция (✅/❌ + одно предложение)
-3. Соответствие подписи — фото и текст дополняют друг друга? (✅/❌ + одно предложение)
+**✍️ Анализ подписи:**
+1. Хук — захватывает ли первая строка внимание ✅/❌ — одно предложение
+2. Ценностное предложение — понятна ли выгода для клиента ✅/❌ — одно предложение
+3. Призыв к действию — конкретный и убедительный ✅/❌ — одно предложение
+4. Хештеги — релевантные, 5–10 штук ✅/❌ — одно предложение
+5. Тон — профессиональный, но тёплый ✅/❌ — одно предложение
+6. Длина — подходящая для Facebook ✅/❌ — одно предложение
+7. Грамматика ✅/❌ — одно предложение
 
-**Анализ подписи:**
-4. Чёткий и профессиональный тон (✅/❌ + одно предложение)
-5. Призыв к действию (✅/❌ + одно предложение)
-6. Подходящая длина (50–300 слов) (✅/❌ + одно предложение)
-7. Грамматика (✅/❌ + одно предложение)
+**🎯 Общая оценка: X/10**
+Напиши 2–3 предложения: что именно делает этот пост сильным или слабым с маркетинговой точки зрения, и что конкретно повысит его эффективность.
 
 Затем:
-- A "Suggested post:" section in English with an improved caption that fits the photo
-- End with: "Ответьте *ok* для публикации или напишите правки."`;
+**Suggested post:** (in English — improved version with a strong hook, clear value proposition, specific CTA, and 5–10 hashtags)
+
+Завершить: "Ответьте *ok* для публикации или напишите правки."`;
 
 const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
 
@@ -134,7 +142,7 @@ async function reviewPost(postText) {
 async function reviewPostWithPhoto(postText, imageBase64) {
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: POST_REVIEW_WITH_PHOTO_PROMPT,
     messages: [{
       role: 'user',
@@ -164,30 +172,37 @@ async function applyCorrection(originalText, correction, imageBase64 = null) {
   return response.content[0].text.trim();
 }
 
-const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a social media content creator for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert specializing in home remodeling businesses. You are creating Facebook content for Hammer Remodeling LLC — a premium bathroom and kitchen remodeling company in the northwest Chicago suburbs. Be strict and honest like a professional marketer.
 
-The user has sent a photo without a caption. Analyze the photo and respond ENTIRELY in Russian — EXCEPT the three caption options which must be in English.
+The user has sent a photo without a caption. Analyze the photo and suggest three caption options.
 
-Respond with:
+Respond ENTIRELY in Russian — EXCEPT the three caption options which must be in English.
 
-**Анализ фото:**
-1. Соответствие теме — подходит ли фото для ремонта ванной/кухни? (✅/❌ + одно предложение)
-2. Качество фото — резкость, освещение, композиция (✅/❌ + одно предложение)
+**📸 Анализ фото:**
+1. Качество фото — резкость, освещение, композиция ✅/❌ — одно предложение
+2. Соответствие теме — ванная/кухня, ремонт ✅/❌ — одно предложение
+3. Профессиональный вид — нет лишних предметов, чисто, аккуратно ✅/❌ — одно предложение
+4. Потенциал «до/после» — показывает ли трансформацию или результат ✅/❌ — одно предложение
+5. Эмоциональный отклик — хочется ли это иметь у себя дома ✅/❌ — одно предложение
+6. Соответствие бренду — выглядит ли это как премиальная компания ✅/❌ — одно предложение
 
-**Варианты подписи (на английском):**
+**🎯 Маркетинговый потенциал фото: X/10**
+Напиши 1–2 предложения: насколько это фото эффективно для продвижения и что можно улучшить при съёмке в следующий раз.
 
-1. [first caption option — professional tone, includes call to action and hashtags]
+**✍️ Варианты подписи (на английском):**
 
-2. [second caption option — warmer/story-driven tone, includes call to action and hashtags]
+1. [Professional tone — strong hook, clear value proposition, specific CTA, 5–10 hashtags]
 
-3. [third caption option — short and punchy, includes call to action and hashtags]
+2. [Story-driven/emotional tone — connects with homeowner aspirations, specific CTA, 5–10 hashtags]
 
-End with (in Russian): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
+3. [Short and punchy — bold opener, one-line value prop, urgent CTA, 5–10 hashtags]
+
+Завершить (на русском): "Выберите вариант (1, 2 или 3) или напишите пожелания по тексту."`;
 
 async function analyzePhotoAndSuggestCaptions(imageBase64) {
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: PHOTO_CAPTION_SUGGEST_PROMPT,
     messages: [{
       role: 'user',
