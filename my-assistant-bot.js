@@ -91,6 +91,29 @@ Respond with:
 - A "Suggested post:" section with an improved version in English (always include this section)
 - End with: "Ответьте *ok* для публикации или напишите правки."`;
 
+const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a social media content reviewer for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
+
+The user has submitted a photo with a caption for a Facebook post. Analyze both together.
+
+Respond ENTIRELY in Russian (feedback, evaluation, everything) — EXCEPT the "Suggested post:" section which must always be in English.
+
+Respond with:
+
+**Анализ фото:**
+1. Соответствие теме — подходит ли фото для ремонта ванной/кухни? (✅/❌ + одно предложение)
+2. Качество фото — резкость, освещение, композиция (✅/❌ + одно предложение)
+3. Соответствие подписи — фото и текст дополняют друг друга? (✅/❌ + одно предложение)
+
+**Анализ подписи:**
+4. Чёткий и профессиональный тон (✅/❌ + одно предложение)
+5. Призыв к действию (✅/❌ + одно предложение)
+6. Подходящая длина (50–300 слов) (✅/❌ + одно предложение)
+7. Грамматика (✅/❌ + одно предложение)
+
+Затем:
+- A "Suggested post:" section in English with an improved caption that fits the photo
+- End with: "Ответьте *ok* для публикации или напишите правки."`;
+
 const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC (bathroom and kitchen remodeling in northwest Chicago suburbs).
 
 The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English — nothing else, no explanations, no labels.`;
@@ -105,12 +128,35 @@ async function reviewPost(postText) {
   return response.content[0].text;
 }
 
-async function applyCorrection(originalText, correction) {
+async function reviewPostWithPhoto(postText, imageBase64) {
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    system: POST_REVIEW_WITH_PHOTO_PROMPT,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
+        { type: 'text', text: `Caption: ${postText}` },
+      ],
+    }],
+  });
+  return response.content[0].text;
+}
+
+async function applyCorrection(originalText, correction, imageBase64 = null) {
+  const userContent = imageBase64
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
+        { type: 'text', text: `Original post:\n${originalText}\n\nCorrections: ${correction}` },
+      ]
+    : `Original post:\n${originalText}\n\nCorrections: ${correction}`;
+
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 1024,
     system: POST_APPLY_CORRECTION_PROMPT,
-    messages: [{ role: 'user', content: `Original post:\n${originalText}\n\nCorrections: ${correction}` }],
+    messages: [{ role: 'user', content: userContent }],
   });
   return response.content[0].text.trim();
 }
@@ -158,7 +204,9 @@ async function publishToFacebook(text, media) {
 async function handlePostFlow(chatId, text, media = null) {
   bot.sendChatAction(chatId, 'typing');
   try {
-    const review = await reviewPost(text);
+    const review = media?.imageBase64
+      ? await reviewPostWithPhoto(text, media.imageBase64)
+      : await reviewPost(text);
     postSessions.set(chatId, { text, pendingMedia: media });
     await bot.sendMessage(chatId, review, { parse_mode: 'Markdown' });
   } catch (err) {
@@ -206,10 +254,19 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Handle photo with caption — treat as a post draft
+  // Handle photo with caption — download, vision-review, and treat as a post draft
   if (msg.photo && msg.caption) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
-    await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId });
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const fileLink = await bot.getFileLink(fileId);
+      const imageData = await axios.get(fileLink, { responseType: 'arraybuffer' });
+      const imageBase64 = Buffer.from(imageData.data).toString('base64');
+      await handlePostFlow(chatId, msg.caption, { type: 'photo', fileId, imageBase64 });
+    } catch (err) {
+      console.error('Error downloading photo:', err.message);
+      bot.sendMessage(chatId, 'Could not download the photo. Please try again.');
+    }
     return;
   }
 
@@ -242,7 +299,7 @@ bot.on('message', async (msg) => {
       postSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
       try {
-        const updatedText = await applyCorrection(session.text, text);
+        const updatedText = await applyCorrection(session.text, text, session.pendingMedia?.imageBase64 ?? null);
         await handlePostFlow(chatId, updatedText, session.pendingMedia);
       } catch (err) {
         console.error('Error applying correction:', err.message);
