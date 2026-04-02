@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
+const { Pool } = require('pg');
 
 const BOT_TOKEN = '8794427596:AAEVIDJFLJHb8tWjwKZ0aHMpCUXOExrQzRg';
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
@@ -29,6 +30,116 @@ const interviewSessions = new Map();
 
 // Strategy sessions: chatId -> { step: 1-5, answers: [] }
 const strategySessions = new Map();
+// ---------------------------------------------------------------------------
+// PostgreSQL – persistent memory
+// ---------------------------------------------------------------------------
+
+const DB_URL = 'postgresql://postgres:EJrRKdONCzmukcReqAlHWNEZvooMxAgm@postgres.railway.internal:5432/railway';
+const pool = new Pool({ connectionString: DB_URL });
+
+// Tracks which chatIds have already been loaded from DB this session
+const dbHistoryLoaded = new Set();
+
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id         SERIAL PRIMARY KEY,
+      chat_id    BIGINT       NOT NULL,
+      role       VARCHAR(20)  NOT NULL,
+      content    TEXT         NOT NULL,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations(chat_id, created_at)'
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      chat_id     BIGINT  PRIMARY KEY,
+      preferences JSONB   NOT NULL DEFAULT '{}',
+      updated_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS posts_history (
+      id           SERIAL PRIMARY KEY,
+      chat_id      BIGINT       NOT NULL,
+      post_text    TEXT         NOT NULL,
+      platform     VARCHAR(20)  NOT NULL,
+      published_at TIMESTAMPTZ  DEFAULT NOW(),
+      approved     BOOLEAN      DEFAULT TRUE
+    )
+  `);
+  console.log('Database tables ready.');
+}
+
+async function loadConversationFromDb(chatId) {
+  const res = await pool.query(
+    'SELECT role, content FROM conversations WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 20',
+    [chatId]
+  );
+  return res.rows.reverse();
+}
+
+async function saveMessageToDb(chatId, role, content) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content);
+  await pool.query(
+    'INSERT INTO conversations (chat_id, role, content) VALUES ($1, $2, $3)',
+    [chatId, role, text]
+  );
+}
+
+async function ensureHistoryLoaded(chatId) {
+  if (dbHistoryLoaded.has(chatId)) return;
+  dbHistoryLoaded.add(chatId);
+  if (conversations.has(chatId) && conversations.get(chatId).length > 0) return;
+  try {
+    const rows = await loadConversationFromDb(chatId);
+    if (rows.length > 0) {
+      conversations.set(chatId, rows);
+      console.log(`Loaded ${rows.length} messages from DB for chat ${chatId}`);
+    }
+  } catch (err) {
+    console.error('Failed to load history from DB:', err.message);
+  }
+}
+
+async function upsertUserPrefs(chatId, prefs) {
+  try {
+    await pool.query(
+      `INSERT INTO user_preferences (chat_id, preferences, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (chat_id) DO UPDATE
+         SET preferences = user_preferences.preferences || $2,
+             updated_at  = NOW()`,
+      [chatId, JSON.stringify(prefs)]
+    );
+  } catch (err) {
+    console.error('upsertUserPrefs error:', err.message);
+  }
+}
+
+async function savePublishedPost(chatId, postText, platform) {
+  try {
+    await pool.query(
+      'INSERT INTO posts_history (chat_id, post_text, platform, approved) VALUES ($1, $2, $3, TRUE)',
+      [chatId, postText, platform]
+    );
+  } catch (err) {
+    console.error('savePublishedPost error:', err.message);
+  }
+}
+
+async function detectAndSavePrefs(chatId, userMessage) {
+  const prefs = {};
+  if (/[а-яёА-ЯЁ]/.test(userMessage)) prefs.language = 'ru';
+  else if (/[a-zA-Z]{3,}/.test(userMessage)) prefs.language = 'en';
+  if (Object.keys(prefs).length > 0) {
+    await upsertUserPrefs(chatId, prefs);
+  }
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Brand knowledge
@@ -637,6 +748,7 @@ function trimHistory(history, maxMessages = 20) {
 }
 
 async function askClaude(chatId, userMessage) {
+  await ensureHistoryLoaded(chatId);
   const history = getHistory(chatId);
   history.push({ role: 'user', content: userMessage });
   trimHistory(history);
@@ -650,6 +762,12 @@ async function askClaude(chatId, userMessage) {
 
   const assistantMessage = response.content[0].text;
   history.push({ role: 'assistant', content: assistantMessage });
+
+  // Persist to DB (fire-and-forget)
+  saveMessageToDb(chatId, 'user', userMessage).catch(e => console.error('DB save error:', e.message));
+  saveMessageToDb(chatId, 'assistant', assistantMessage).catch(e => console.error('DB save error:', e.message));
+  detectAndSavePrefs(chatId, userMessage).catch(e => console.error('Prefs error:', e.message));
+
   return assistantMessage;
 }
 
@@ -687,13 +805,19 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-bot.onText(/\/clear/, (msg) => {
+bot.onText(/\/clear/, async (msg) => {
   const chatId = msg.chat.id;
   conversations.set(chatId, []);
+  dbHistoryLoaded.delete(chatId);
   interviewSessions.delete(chatId);
   captionSessions.delete(chatId);
   postSessions.delete(chatId);
   strategySessions.delete(chatId);
+  try {
+    await pool.query('DELETE FROM conversations WHERE chat_id = $1', [chatId]);
+  } catch (err) {
+    console.error('Failed to clear DB history:', err.message);
+  }
   bot.sendMessage(chatId, 'All sessions cleared. Fresh start!');
 });
 
@@ -783,6 +907,7 @@ bot.on('message', async (msg) => {
       await bot.sendMessage(chatId, STRATEGY_QUESTIONS[session.step - 1], { parse_mode: 'Markdown' });
     } else {
       strategySessions.delete(chatId);
+      upsertUserPrefs(chatId, { companyPreference: session.answers[0] }).catch(e => console.error('Prefs error:', e.message));
       bot.sendChatAction(chatId, 'typing');
       try {
         const strategy = await generateContentStrategy(session.answers);
@@ -810,6 +935,7 @@ bot.on('message', async (msg) => {
     } else {
       // All 5 answers collected -- generate brief
       interviewSessions.delete(chatId);
+      upsertUserPrefs(chatId, { companyPreference: selectBrand(session.answers[0]) }).catch(e => console.error('Prefs error:', e.message));
       bot.sendChatAction(chatId, 'typing');
       try {
         const { displayText, caption } = await generateCreativeBrief(session.pendingMedia.imageBase64, session.answers);
@@ -898,10 +1024,13 @@ bot.on('message', async (msg) => {
         else reply += 'Instagram ❌';
         if (results.errors.length) reply += `\n\nОшибки:\n${results.errors.join('\n')}`;
         bot.sendMessage(chatId, reply);
+        if (results.facebook) savePublishedPost(chatId, session.text, 'facebook').catch(e => console.error('DB error:', e.message));
+        if (results.instagram && !results.instagram?.skipped) savePublishedPost(chatId, session.text, 'instagram').catch(e => console.error('DB error:', e.message));
       } else {
         try {
           await publishToFacebook(session.text, session.pendingMedia);
           bot.sendMessage(chatId, 'Posted to Facebook successfully!');
+          savePublishedPost(chatId, session.text, 'facebook').catch(e => console.error('DB error:', e.message));
         } catch (err) {
           console.error('Facebook publish error:', err.response?.data || err.message);
           bot.sendMessage(chatId, `Failed to publish: ${err.response?.data?.error?.message || err.message}`);
@@ -962,4 +1091,5 @@ bot.on('polling_error', (err) => {
   console.error('Polling error:', err.message);
 });
 
+initDb().catch(err => console.error('DB init failed:', err.message));
 console.log('Bot is running...');
