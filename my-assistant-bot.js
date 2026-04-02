@@ -747,20 +747,50 @@ function trimHistory(history, maxMessages = 20) {
   if (history.length > maxMessages) history.splice(0, history.length - maxMessages);
 }
 
+const WEB_SEARCH_TOOL = [{ type: 'web_search_20250305', name: 'web_search' }];
+
+function needsWebSearch(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return /найди|поищи|поиск|погугли|что сейчас|последние новости|последние|тренды|конкурент|competitor|trends|price|prices|review|reviews|search|find me|look up|what are|latest|current market/.test(t);
+}
+
+function extractText(content) {
+  if (typeof content === 'string') return content;
+  return content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
 async function askClaude(chatId, userMessage) {
   await ensureHistoryLoaded(chatId);
   const history = getHistory(chatId);
   history.push({ role: 'user', content: userMessage });
   trimHistory(history);
 
-  const response = await anthropic.messages.create({
+  const useSearch = needsWebSearch(userMessage);
+  const baseParams = {
     model: CLAUDE_MODEL,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: SYSTEM_PROMPT,
-    messages: history,
-  });
+  };
+  if (useSearch) baseParams.tools = WEB_SEARCH_TOOL;
 
-  const assistantMessage = response.content[0].text;
+  // Use a separate array for the multi-turn tool loop
+  // so intermediate tool_use/tool_result pairs don't pollute the history cache
+  let messages = history.map(m => ({ ...m }));
+  let response = await anthropic.messages.create({ ...baseParams, messages });
+
+  // Multi-turn loop: let Claude finish all web searches before returning
+  let safetyCounter = 0;
+  while (response.stop_reason === 'tool_use' && safetyCounter++ < 5) {
+    messages.push({ role: 'assistant', content: response.content });
+    const toolResults = response.content
+      .filter(b => b.type === 'tool_use')
+      .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' }));
+    messages.push({ role: 'user', content: toolResults });
+    response = await anthropic.messages.create({ ...baseParams, messages });
+  }
+
+  const assistantMessage = extractText(response.content);
   history.push({ role: 'assistant', content: assistantMessage });
 
   // Persist to DB (fire-and-forget)
