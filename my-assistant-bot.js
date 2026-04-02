@@ -2,6 +2,10 @@ const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+const os = require('os');
 
 const BOT_TOKEN = '8794427596:AAEVIDJFLJHb8tWjwKZ0aHMpCUXOExrQzRg';
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
@@ -70,6 +74,19 @@ async function initDb() {
       approved     BOOLEAN      DEFAULT TRUE
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id            SERIAL PRIMARY KEY,
+      chat_id       BIGINT       NOT NULL,
+      reminder_text TEXT         NOT NULL,
+      remind_at     TIMESTAMPTZ  NOT NULL,
+      created_at    TIMESTAMPTZ  DEFAULT NOW(),
+      sent          BOOLEAN      DEFAULT FALSE
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_rem_due ON reminders(remind_at) WHERE NOT sent'
+  );
   console.log('Database tables ready.');
 }
 
@@ -823,6 +840,314 @@ async function downloadPhoto(fileId) {
 }
 
 // ---------------------------------------------------------------------------
+// Facebook Analytics
+// ---------------------------------------------------------------------------
+
+async function fetchFbPageInsights() {
+  const pageRes = await axios.get(`https://graph.facebook.com/v19.0/${FB_PAGE_ID}`, {
+    params: { fields: 'followers_count,fan_count', access_token: FB_PAGE_ACCESS_TOKEN },
+  });
+  const followers = pageRes.data.followers_count || pageRes.data.fan_count || 0;
+
+  const postsRes = await axios.get(`https://graph.facebook.com/v19.0/${FB_PAGE_ID}/posts`, {
+    params: {
+      fields: 'message,likes.summary(true),comments.summary(true),shares,created_time',
+      limit: 10,
+      access_token: FB_PAGE_ACCESS_TOKEN,
+    },
+  });
+  const posts = postsRes.data.data || [];
+  return { followers, posts };
+}
+
+async function generateAnalyticsReport(followers, posts) {
+  const postsData = posts.map((p, i) => ({
+    index: i + 1,
+    message: (p.message || '(no text)').substring(0, 80),
+    likes: p.likes?.summary?.total_count || 0,
+    comments: p.comments?.summary?.total_count || 0,
+    shares: p.shares?.count || 0,
+    date: p.created_time?.split('T')[0] || '',
+    engagement: (p.likes?.summary?.total_count || 0) + (p.comments?.summary?.total_count || 0) + (p.shares?.count || 0),
+  }));
+
+  const sorted = [...postsData].sort((a, b) => b.engagement - a.engagement);
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+
+  const analyticsPrompt = `You are a social media analytics expert for Hammer Remodeling LLC.
+
+${BRAND_KNOWLEDGE}
+
+Analyze Facebook Page performance and give specific, actionable recommendations.
+Respond entirely in Russian. Be direct and concrete — no generic advice.
+
+Data:
+- Followers: ${followers}
+- Last 10 posts:
+${postsData.map(p => `  Post ${p.index} (${p.date}): 👍${p.likes} 💬${p.comments} 🔁${p.shares} — "${p.message}"`).join('\n')}
+- Best post: #${best.index} (${best.engagement} total engagement)
+- Worst post: #${worst.index} (${worst.engagement} total engagement)
+
+Format your response as:
+**Обзор** — 2-3 предложения об общей картине вовлечённости
+**Лучший пост** — что сработало и почему
+**Худший пост** — что пошло не так и как исправить
+**4 рекомендации** — конкретные действия прямо сейчас
+**Следующий пост** — конкретная идея на основе данных`;
+
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 2048,
+    system: analyticsPrompt,
+    messages: [{ role: 'user', content: 'Analyze and recommend.' }],
+  });
+
+  const table = postsData.map(p => `${p.index}. ${p.date}: 👍${p.likes} 💬${p.comments} 🔁${p.shares}`).join('\n');
+  return `📊 *Facebook Analytics*\n\n👥 Подписчики: *${followers}*\n\n*Последние 10 постов:*\n${table}\n\n${response.content[0].text}`;
+}
+
+// ---------------------------------------------------------------------------
+// Voice transcription
+// ---------------------------------------------------------------------------
+
+async function transcribeVoice(audioBuffer, mimeType = 'audio/ogg') {
+  const audioBase64 = audioBuffer.toString('base64');
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: mimeType, data: audioBase64 } },
+        { type: 'text', text: 'Transcribe this audio message exactly as spoken. Return only the transcribed text, nothing else.' },
+      ],
+    }],
+  });
+  return response.content[0].text.trim();
+}
+
+// ---------------------------------------------------------------------------
+// Reminders
+// ---------------------------------------------------------------------------
+
+function isReminderRequest(text) {
+  if (!text) return false;
+  return /напомни|remind me|set a? ?reminder|поставь напоминание/i.test(text);
+}
+
+async function parseReminderWithClaude(text) {
+  const now = new Date().toISOString();
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 200,
+    messages: [{
+      role: 'user',
+      content: `Current UTC time: ${now}
+
+User message: "${text}"
+
+Extract the reminder. Reply ONLY with valid JSON — no markdown, no extra text:
+{"text": "what to remind about", "iso": "YYYY-MM-DDTHH:MM:SSZ"}
+
+If you cannot determine a clear future date/time, reply: {"error": "cannot parse"}`,
+    }],
+  });
+  try {
+    return JSON.parse(response.content[0].text.trim());
+  } catch {
+    return { error: 'parse failed' };
+  }
+}
+
+async function saveReminder(chatId, reminderText, remindAt) {
+  const res = await pool.query(
+    'INSERT INTO reminders (chat_id, reminder_text, remind_at) VALUES ($1, $2, $3) RETURNING id',
+    [chatId, reminderText, remindAt]
+  );
+  return res.rows[0].id;
+}
+
+async function listReminders(chatId) {
+  const res = await pool.query(
+    `SELECT id, reminder_text, remind_at FROM reminders
+     WHERE chat_id = $1 AND NOT sent AND remind_at > NOW()
+     ORDER BY remind_at`,
+    [chatId]
+  );
+  return res.rows;
+}
+
+async function cancelReminderById(chatId, id) {
+  const res = await pool.query(
+    'UPDATE reminders SET sent = TRUE WHERE id = $1 AND chat_id = $2 AND NOT sent',
+    [id, chatId]
+  );
+  return res.rowCount > 0;
+}
+
+async function checkAndSendReminders() {
+  try {
+    const res = await pool.query(
+      'SELECT id, chat_id, reminder_text FROM reminders WHERE NOT sent AND remind_at <= NOW()'
+    );
+    for (const row of res.rows) {
+      try {
+        await bot.sendMessage(row.chat_id, `⏰ *Напоминание:* ${row.reminder_text}`, { parse_mode: 'Markdown' });
+        await pool.query('UPDATE reminders SET sent = TRUE WHERE id = $1', [row.id]);
+      } catch (err) {
+        console.error(`Failed to send reminder ${row.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Reminder check error:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Document analysis
+// ---------------------------------------------------------------------------
+
+async function analyzeDocument(docBuffer, mimeType, filename, userQuestion) {
+  const isPdf = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+  const isDocx = filename.toLowerCase().endsWith('.docx') ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  const systemPrompt = `You are Ulik's senior marketing partner and analyst.
+
+${BRAND_KNOWLEDGE}
+
+Analyze the document provided and give actionable insights for a remodeling business owner.
+- Contracts: check terms, payment schedule, scope, red flags
+- Estimates: check pricing, completeness, market rates
+- Briefs: check clarity, requirements, feasibility
+- Marketing materials: check brand alignment, effectiveness
+
+Be concise and specific. Respond in the same language the user writes in.`;
+
+  const question = userQuestion || 'Проанализируй этот документ. Выдели ключевые моменты, риски и рекомендации.';
+  let messageContent;
+
+  if (isPdf) {
+    messageContent = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: docBuffer.toString('base64') } },
+      { type: 'text', text: question },
+    ];
+  } else {
+    let textContent = '';
+    if (isDocx) {
+      try {
+        const mammoth = require('mammoth');
+        const result = await mammoth.extractRawText({ buffer: docBuffer });
+        textContent = result.value;
+      } catch {
+        textContent = `[Could not extract DOCX text from ${filename}]`;
+      }
+    } else {
+      textContent = docBuffer.toString('utf-8');
+    }
+    messageContent = `Файл: ${filename}\n\nСодержимое:\n${textContent.substring(0, 12000)}\n\n${question}`;
+  }
+
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 2048,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: messageContent }],
+  });
+  return response.content[0].text;
+}
+
+// ---------------------------------------------------------------------------
+// Video analysis
+// ---------------------------------------------------------------------------
+
+async function extractVideoFrames(videoBuffer, intervalSeconds = 5) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgvid-'));
+  const inputPath = path.join(tmpDir, 'input.mp4');
+  const framesPattern = path.join(tmpDir, 'frame_%03d.jpg');
+
+  try {
+    fs.writeFileSync(inputPath, videoBuffer);
+
+    await new Promise((resolve, reject) => {
+      const ff = spawn('ffmpeg', [
+        '-i', inputPath,
+        '-vf', `fps=1/${intervalSeconds},scale=960:-1`,
+        '-frames:v', '10',
+        '-q:v', '5',
+        framesPattern, '-y',
+      ]);
+      ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)));
+      ff.on('error', (err) => reject(new Error(`ffmpeg not found: ${err.message}`)));
+    });
+
+    const frames = fs.readdirSync(tmpDir)
+      .filter(f => f.startsWith('frame_') && f.endsWith('.jpg'))
+      .sort()
+      .map(f => fs.readFileSync(path.join(tmpDir, f)).toString('base64'));
+
+    return frames;
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function analyzeVideoContent(frames, caption) {
+  const contentParts = frames.slice(0, 8).map(f => ({
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/jpeg', data: f },
+  }));
+  contentParts.push({
+    type: 'text',
+    text: caption
+      ? `Video caption: "${caption}"\n\nAnalyze the frames above and give a marketing creative brief.`
+      : 'Analyze these video frames and give a marketing creative brief.',
+  });
+
+  const videoPrompt = `You are a senior marketing expert for Hammer Remodeling LLC / Longhorn Construction.
+
+${BRAND_KNOWLEDGE}
+
+${MARKETING_RULES}
+
+Analyze the video frames and produce a creative brief.
+Respond entirely in Russian — except the caption which must be in English.
+Short, punchy, creative director style.
+
+**Анализ видео:**
+- Что показано (тип работы, этап)
+- Качество съёмки (свет, стабильность, ракурс) ✅/❌
+- Маркетинговый потенциал: X/10
+
+${IMAGE_EDITING_SECTION}
+
+**Для публикации:**
+- Платформа: Facebook / Instagram Reels / оба
+- Тип контента: before/after / process / educational / social proof / offer
+- Воронка + глубина CTA
+
+**Caption (English):**
+[Strong hook + brand pillar + specific detail + CTA + hashtags]
+
+Завершить: "Ответьте *ok* чтобы опубликовать, или напишите правки."`;
+
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 2048,
+    system: videoPrompt,
+    messages: [{ role: 'user', content: contentParts }],
+  });
+  return response.content[0].text;
+}
+
+async function downloadTelegramFile(fileId) {
+  const fileLink = await bot.getFileLink(fileId);
+  const res = await axios.get(fileLink, { responseType: 'arraybuffer' });
+  return Buffer.from(res.data);
+}
+
+// ---------------------------------------------------------------------------
 // Bot commands
 // ---------------------------------------------------------------------------
 
@@ -831,7 +1156,8 @@ bot.onText(/\/start/, (msg) => {
   const name = msg.from.first_name || 'there';
   bot.sendMessage(
     chatId,
-    `Hey ${name}! I'm your personal assistant and marketing expert.\n\nI work with:\n• Hammer Remodeling LLC (Chicago)\n• Longhorn Construction (Austin, TX)\n\nSend a photo with "проверь фото" to start a creative brief interview.\nOr just send a photo with a caption to review it directly.\n\nType anything to chat!`
+    `Hey ${name}! I'm your personal assistant and marketing expert.\n\nI work with:\n• Hammer Remodeling LLC (Chicago)\n• Longhorn Construction (Austin, TX)\n\n*What I can do:*\n• Photo + "проверь фото" → creative brief interview\n• Photo with caption → direct review & publish\n• Photo only → caption suggestions\n• Voice message → transcribe & respond\n• Video → analyze frames & brief\n• PDF/DOCX/TXT → analyze document\n• "напомни мне..." → set a reminder\n\nType /help for all commands.`,
+    { parse_mode: 'Markdown' }
   );
 });
 
@@ -855,7 +1181,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Available commands:*\n\n/start -- Welcome\n/clear -- Clear all sessions and history\n/post [text] -- Review & publish a text post\n/strategy -- Build a content strategy (interview)\n/help -- This message\n\n*Photo flows:*\n• Photo + "проверь фото" → interview & creative brief\n• Photo + caption → direct review & publish\n• Photo only → caption suggestions`,
+    `*Available commands:*\n\n/start — Welcome\n/clear — Clear all sessions and history\n/post [text] — Review & publish a text post\n/strategy — Build a content strategy (interview)\n/analytics — Facebook Page insights & recommendations\n/reminders — List your active reminders\n/cancelreminder [id] — Cancel a reminder by ID\n/help — This message\n\n*Photo flows:*\n• Photo + "проверь фото" → interview & creative brief\n• Photo + caption → direct review & publish\n• Photo only → caption suggestions\n\n*Other:*\n• Voice message → transcribe & respond\n• Video → frame analysis & creative brief\n• PDF/DOCX/TXT → document analysis\n• "напомни мне X в Y" → set a reminder`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -869,6 +1195,59 @@ bot.onText(/\/strategy/, (msg) => {
   const chatId = msg.chat.id;
   strategySessions.set(chatId, { step: 1, answers: [] });
   bot.sendMessage(chatId, STRATEGY_QUESTIONS[0], { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/analytics/, async (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendChatAction(chatId, 'typing');
+  try {
+    const { followers, posts } = await fetchFbPageInsights();
+    if (posts.length === 0) {
+      bot.sendMessage(chatId, 'Не найдено постов на странице. Проверь FB_PAGE_ACCESS_TOKEN и FB_PAGE_ID.');
+      return;
+    }
+    const report = await generateAnalyticsReport(followers, posts);
+    const CHUNK = 4000;
+    for (let i = 0; i < report.length; i += CHUNK) {
+      await bot.sendMessage(chatId, report.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
+    }
+  } catch (err) {
+    console.error('Analytics error:', err.response?.data || err.message);
+    const detail = err.response?.data?.error?.message || err.message;
+    bot.sendMessage(chatId, `Ошибка при получении аналитики: ${detail}`);
+  }
+});
+
+bot.onText(/\/reminders/, async (msg) => {
+  const chatId = msg.chat.id;
+  try {
+    const rows = await listReminders(chatId);
+    if (rows.length === 0) {
+      bot.sendMessage(chatId, 'Нет активных напоминаний.');
+      return;
+    }
+    const list = rows.map(r => {
+      const dt = new Date(r.remind_at);
+      const formatted = dt.toLocaleString('ru-RU', { timeZone: 'America/Chicago', dateStyle: 'short', timeStyle: 'short' });
+      return `*${r.id}.* ${r.reminder_text} — _${formatted}_`;
+    }).join('\n');
+    bot.sendMessage(chatId, `⏰ *Твои напоминания:*\n\n${list}\n\nОтмени командой /cancelreminder [id]`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('List reminders error:', err.message);
+    bot.sendMessage(chatId, 'Ошибка при загрузке напоминаний.');
+  }
+});
+
+bot.onText(/\/cancelreminder\s+(\d+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const id = parseInt(match[1]);
+  try {
+    const ok = await cancelReminderById(chatId, id);
+    bot.sendMessage(chatId, ok ? `✅ Напоминание #${id} отменено.` : `Напоминание #${id} не найдено или уже отправлено.`);
+  } catch (err) {
+    console.error('Cancel reminder error:', err.message);
+    bot.sendMessage(chatId, 'Ошибка при отмене напоминания.');
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -918,9 +1297,85 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // ── VOICE ──────────────────────────────────────────────────────────────────
+  if (msg.voice) {
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const audioBuffer = await downloadTelegramFile(msg.voice.file_id);
+      const transcribed = await transcribeVoice(audioBuffer, 'audio/ogg');
+      await bot.sendMessage(chatId, `🎤 _"${transcribed}"_`, { parse_mode: 'Markdown' });
+      // Process as regular message
+      const reply = await askClaude(chatId, transcribed);
+      bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Voice error:', err.message);
+      bot.sendMessage(chatId, 'Не удалось расшифровать голосовое сообщение. Попробуй ещё раз.');
+    }
+    return;
+  }
+
+  // ── DOCUMENT ───────────────────────────────────────────────────────────────
+  if (msg.document) {
+    const doc = msg.document;
+    const fname = doc.file_name || 'document';
+    const mime = doc.mime_type || 'application/octet-stream';
+    const supported = /\.(pdf|docx|txt)$/i.test(fname) ||
+      mime === 'application/pdf' ||
+      mime === 'text/plain' ||
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    if (!supported) {
+      bot.sendMessage(chatId, `Поддерживаемые форматы: PDF, DOCX, TXT. Получен: ${fname}`);
+      return;
+    }
+
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const docBuffer = await downloadTelegramFile(doc.file_id);
+      const analysis = await analyzeDocument(docBuffer, mime, fname, msg.caption || '');
+      const CHUNK = 4000;
+      for (let i = 0; i < analysis.length; i += CHUNK) {
+        await bot.sendMessage(chatId, analysis.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Document analysis error:', err.message);
+      bot.sendMessage(chatId, `Ошибка при анализе документа: ${err.message}`);
+    }
+    return;
+  }
+
   // ── VIDEO ──────────────────────────────────────────────────────────────────
-  if (msg.video && msg.caption) {
-    await handlePostFlow(chatId, msg.caption, { type: 'video', fileId: msg.video.file_id });
+  if (msg.video || msg.video_note) {
+    const videoFileId = msg.video ? msg.video.file_id : msg.video_note.file_id;
+    const caption = msg.caption || '';
+
+    // Caption triggers post review flow (existing behaviour)
+    if (msg.video && caption && !isReviewRequest(caption)) {
+      await handlePostFlow(chatId, caption, { type: 'video', fileId: videoFileId });
+      return;
+    }
+
+    // Review request or no caption → analyze frames
+    bot.sendChatAction(chatId, 'upload_video');
+    try {
+      const videoBuffer = await downloadTelegramFile(videoFileId);
+      await bot.sendMessage(chatId, '⏳ Извлекаю кадры и анализирую видео...');
+      bot.sendChatAction(chatId, 'typing');
+      const frames = await extractVideoFrames(videoBuffer, 5);
+      if (frames.length === 0) throw new Error('No frames extracted — is ffmpeg installed?');
+      const brief = await analyzeVideoContent(frames, caption);
+      // Store for potential publish
+      postSessions.set(chatId, { text: '', pendingMedia: { type: 'video', fileId: videoFileId }, publishBoth: false });
+      await bot.sendMessage(chatId, brief, { parse_mode: 'Markdown' });
+      // If review request, also start interview
+      if (isReviewRequest(caption)) {
+        interviewSessions.set(chatId, { step: 1, answers: [], pendingMedia: { type: 'video', fileId: videoFileId, imageBase64: frames[0] } });
+        await bot.sendMessage(chatId, INTERVIEW_QUESTIONS[0], { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Video analysis error:', err.message);
+      bot.sendMessage(chatId, `Ошибка при анализе видео: ${err.message}`);
+    }
     return;
   }
 
@@ -1100,6 +1555,26 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // ── REMINDER REQUEST ───────────────────────────────────────────────────────
+  if (isReminderRequest(text)) {
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const parsed = await parseReminderWithClaude(text);
+      if (parsed.error) {
+        bot.sendMessage(chatId, 'Не смог разобрать дату/время напоминания. Попробуй: "напомни мне позвонить клиенту через 2 часа" или "напомни завтра в 10:00 проверить смету".');
+      } else {
+        const id = await saveReminder(chatId, parsed.text, parsed.iso);
+        const dt = new Date(parsed.iso);
+        const formatted = dt.toLocaleString('ru-RU', { timeZone: 'America/Chicago', dateStyle: 'medium', timeStyle: 'short' });
+        bot.sendMessage(chatId, `✅ Напоминание #${id} сохранено:\n*${parsed.text}*\n🕐 ${formatted}`, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Reminder save error:', err.message);
+      bot.sendMessage(chatId, 'Ошибка при сохранении напоминания. Попробуй ещё раз.');
+    }
+    return;
+  }
+
   // ── REGULAR CONVERSATION ───────────────────────────────────────────────────
   bot.sendChatAction(chatId, 'typing');
   try {
@@ -1122,4 +1597,5 @@ bot.on('polling_error', (err) => {
 });
 
 initDb().catch(err => console.error('DB init failed:', err.message));
+setInterval(checkAndSendReminders, 60 * 1000);
 console.log('Bot is running...');
