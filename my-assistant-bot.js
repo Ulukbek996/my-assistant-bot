@@ -766,32 +766,33 @@ ${MARKETING_RULES}
     name: 'УСЬ',
     emoji: '🔧',
     title: 'Тех поддержка',
-    systemPrompt: `Ты УСЬ — старший разработчик и специалист технической поддержки. Точный, технический, решаешь проблемы в корне.
+    systemPrompt: `Ты УСЬ — дружелюбный айтишник, который следит за ботом и объясняет технические вещи простым языком. Никакого жаргона — только понятные объяснения и чёткие инструкции.
 
-## Стек бота
-- Runtime: Node.js
-- Telegram: node-telegram-bot-api (polling)
-- AI: Anthropic Claude API (@anthropic-ai/sdk), claude-sonnet-4-20250514
-- Voice: OpenAI Whisper (whisper-1)
-- DB: PostgreSQL на Railway (таблицы: conversations, user_preferences, posts_history, reminders)
-- Social: Facebook/Instagram Graph API v19.0
-- Video: ffmpeg (извлечение кадров)
+## Что ты знаешь о боте
+- Бот работает на Node.js, задеплоен на Railway
+- База данных: PostgreSQL на Railway (таблицы: conversations, user_preferences, posts_history, reminders)
+- ИИ: Anthropic Claude API (claude-sonnet-4-20250514)
+- Голос: OpenAI Whisper (расшифровка голосовых)
+- Соцсети: Facebook и Instagram Graph API v19.0
+- Видео: ffmpeg (извлекает кадры для анализа)
+- Поиск фото: Unsplash API
 - Файл бота: C:/Users/User/my-assistant-bot.js
-- Фото-поиск: Unsplash API
 
-## Как работаешь
+## Как ты объясняешь проблемы
 
-**ДИАГНОСТИКА**
-Не гадаешь — анализируешь реальную причину. Читаешь стек трейс. Проверяешь предположения.
+Когда пользователь описывает проблему или присылает ошибку:
+1. Первые 1-2 предложения — что случилось, простым языком (используй аналогии: "бот уснул и нужен перезапуск", "токен как пропуск — он просрочился")
+2. Нумерованные шаги — как исправить, конкретно и по порядку
+3. Финал: "Если не помогло — скажи, разберёмся"
 
-**КОНКРЕТНОСТЬ**
-Даёшь точные ответы с кодом когда нужно. Без ручного размахивания — называешь конкретный файл, строку, функцию.
+## Твоя личность
+- Объясняешь как друг-айтишник, не как программист на собеседовании
+- Используешь аналогии из обычной жизни для технических вещей
+- Никогда не говоришь "ошибка 500" без объяснения что это значит
+- Короткие ответы — максимум 5-7 предложений если нет чётких шагов
 
-**ЛИЧНОСТЬ**
-Говоришь как старший разработчик, который всё видел и всё починил. Лаконично. По делу. Без лишних слов.
-
-**ЯЗЫК**
-Отвечаешь по-русски. Код и технические термины — на английском.`,
+## Язык
+Отвечаешь по-русски. Технические термины объясняешь в скобках если используешь.`,
   },
 
   тим: {
@@ -835,7 +836,7 @@ const AGENTS_MENU_TEXT = `👥 *Выбери агента:*
    Любые задачи, вопросы, переводы, напоминания, поиск информации, документы, планирование
 
 3. 🔧 *УСЬ* — Тех поддержка
-   Анализ ошибок, отладка, технические вопросы, помощь с кодом, мониторинг бота
+   Объясняет ошибки простым языком, мониторинг бота /status, помощь с техническими вопросами
 
 4. 📊 *ТИМ* — Аналитик
    Анализ конкурентов, тренды, стратегия, отчёты, поиск данных
@@ -1401,6 +1402,88 @@ bot.onText(/\/тим/, async (msg) => {
   bot.sendMessage(chatId, '📊 *ТИМ* активирован. Аналитик готов к работе.', { parse_mode: 'Markdown' });
 });
 
+async function checkBotStatus() {
+  const results = [];
+
+  // Database
+  try {
+    await pool.query('SELECT 1');
+    results.push('✅ База данных работает');
+  } catch (err) {
+    results.push(`❌ База данных недоступна — ${err.message}`);
+  }
+
+  // Facebook token
+  try {
+    const res = await axios.get(`https://graph.facebook.com/v19.0/${FB_PAGE_ID}`, {
+      params: { fields: 'id', access_token: FB_PAGE_ACCESS_TOKEN },
+      timeout: 5000,
+    });
+    results.push(res.data.id ? '✅ Facebook токен рабочий' : '❌ Facebook токен не прошёл проверку');
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    if (/token|expired|invalid/i.test(msg)) {
+      results.push('❌ Facebook токен истёк — нужно обновить');
+    } else {
+      results.push(`❌ Facebook недоступен — ${msg}`);
+    }
+  }
+
+  // OpenAI key
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      await openai.models.list({ limit: 1 });
+      results.push('✅ OpenAI ключ рабочий (голосовые работают)');
+    } catch (err) {
+      if (err.status === 401) {
+        results.push('❌ OpenAI ключ недействителен — голосовые не работают');
+      } else {
+        results.push(`⚠️ OpenAI — не удалось проверить: ${err.message}`);
+      }
+    }
+  } else {
+    results.push('⚠️ OpenAI ключ не настроен — голосовые недоступны');
+  }
+
+  // Unsplash key
+  if (process.env.UNSPLASH_ACCESS_KEY) {
+    try {
+      await axios.get('https://api.unsplash.com/photos', {
+        params: { per_page: 1, client_id: process.env.UNSPLASH_ACCESS_KEY },
+        timeout: 5000,
+      });
+      results.push('✅ Unsplash ключ рабочий (поиск фото работает)');
+    } catch (err) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        results.push('❌ Unsplash ключ недействителен — поиск фото не работает');
+      } else {
+        results.push(`⚠️ Unsplash — не удалось проверить: ${err.message}`);
+      }
+    }
+  } else {
+    results.push('⚠️ Unsplash ключ не настроен — поиск фото недоступен');
+  }
+
+  return results;
+}
+
+bot.onText(/\/status/, async (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendChatAction(chatId, 'typing');
+  await setActiveAgent(chatId, 'усь');
+  try {
+    const checks = await checkBotStatus();
+    const allOk = checks.every(c => c.startsWith('✅'));
+    const header = allOk
+      ? '🔧 *УСЬ* — Всё работает, шеф 👍'
+      : '🔧 *УСЬ* — Проверил, есть вопросы:';
+    await bot.sendMessage(chatId, `${header}\n\n${checks.join('\n')}`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    bot.sendMessage(chatId, `🔧 *УСЬ* — Не смог провести проверку: ${err.message}`, { parse_mode: 'Markdown' });
+  }
+});
+
 bot.onText(/\/clear/, async (msg) => {
   const chatId = msg.chat.id;
   conversations.set(chatId, []);
@@ -1486,7 +1569,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
+    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
     { parse_mode: 'Markdown' }
   );
 });
