@@ -1,5 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 const axios = require('axios');
 const { Pool } = require('pg');
 const fs = require('fs');
@@ -911,20 +912,16 @@ Format your response as:
 // Voice transcription
 // ---------------------------------------------------------------------------
 
-async function transcribeVoice(audioBuffer, mimeType = 'audio/ogg') {
-  const audioBase64 = audioBuffer.toString('base64');
-  const response = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 1024,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'base64', media_type: mimeType, data: audioBase64 } },
-        { type: 'text', text: 'Transcribe this audio message exactly as spoken. Return only the transcribed text, nothing else.' },
-      ],
-    }],
+async function transcribeVoice(audioBuffer) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { Readable } = require('stream');
+  const stream = Readable.from(audioBuffer);
+  stream.path = 'voice.ogg';
+  const response = await openai.audio.transcriptions.create({
+    file: stream,
+    model: 'whisper-1',
   });
-  return response.content[0].text.trim();
+  return response.text.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,7 +1299,7 @@ bot.on('message', async (msg) => {
     bot.sendChatAction(chatId, 'typing');
     try {
       const audioBuffer = await downloadTelegramFile(msg.voice.file_id);
-      const transcribed = await transcribeVoice(audioBuffer, 'audio/ogg');
+      const transcribed = await transcribeVoice(audioBuffer);
       await bot.sendMessage(chatId, `🎤 _"${transcribed}"_`, { parse_mode: 'Markdown' });
       // Process as regular message
       const reply = await askClaude(chatId, transcribed);
