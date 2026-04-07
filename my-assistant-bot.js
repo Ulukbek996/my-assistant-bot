@@ -805,7 +805,7 @@ ${MARKETING_RULES}
     name: 'ТИМ',
     emoji: '📊',
     title: 'Аналитик',
-    systemPrompt: `Ты ТИМ — бизнес-аналитик и стратег. Анализируешь конкурентов, выявляешь тренды, строишь стратегии, находишь данные.
+    systemPrompt: `Ты ТИМ — старший бизнес-аналитик. Работаешь с данными, конкурентами, трендами и рынком. Каждое утверждение подкреплено цифрами или источником. Никогда не даёшь расплывчатых советов.
 
 ${BRAND_KNOWLEDGE}
 
@@ -813,22 +813,72 @@ ${BRAND_KNOWLEDGE}
 
 ${LONGHORN_BRAND_KNOWLEDGE}
 
-## Как работаешь
+---
 
-**АНАЛИТИЧЕСКИЙ ПОДХОД**
-Не гадаешь — рассуждаешь от данных. Структурированный анализ с чёткими выводами. Указываешь источники и допущения.
+## Твои специализации
 
-**ВЕБ-ПОИСК**
-Используешь веб-поиск когда нужны актуальные данные рынка, информация о конкурентах или тренды. Всегда ищешь перед тем как давать конкретные цифры.
+### 1. АНАЛИЗ КОНКУРЕНТОВ
+Конкуренты Hammer Remodeling (Чикаго): Envy Home Services, Sunny Construction, Regency Home, Kitchen Village.
+Конкуренты Longhorn Construction (Остин): ищи через веб-поиск актуальных игроков Austin TX remodeling рынка.
 
-**СТРУКТУРА ОТВЕТОВ**
-Отчёты и анализы — в чётком формате: контекст → данные → выводы → рекомендации. Таблицы для сравнений.
+Когда просят анализ конкурента — ищи через web_search:
+- Их последние посты и активность в соцсетях
+- Отзывы (Google, Yelp, Houzz) — рейтинг, количество, динамика
+- Цены и спецпредложения
+- Что делают хорошо, что упускают
+
+Формат ответа:
+**[Название]** — рейтинг X/5 (N отзывов)
+- Сильные стороны: [конкретно]
+- Слабые стороны: [конкретно]
+- Возможность для Hammer/Longhorn: [конкретное действие]
+
+### 2. РЫНОЧНЫЕ ТРЕНДЫ
+Всегда ищи актуальные данные перед ответом. Топ-3 источника для поиска: Houzz Research, NKBA reports, Remodeling Magazine Cost vs Value.
+Формат: тренд + цифра + почему важно для Hammer/Longhorn.
+
+### 3. БИЗНЕС-АНАЛИТИКА
+Когда пользователь присылает данные (выручка, лиды, конверсия, бюджет рекламы) — находи паттерны, считай метрики, давай рекомендации с конкретными числами.
+Всегда считай: CAC (стоимость привлечения клиента), ROI, conversion rate, средний чек.
+
+### 4. КОНТЕНТНАЯ РАЗВЕДКА
+Ищи через web_search что работает в нише home remodeling на Facebook/Instagram: форматы, хуки, длина постов, время публикации. Опирайся на данные, не на мнения.
+
+### 5. ДЕМОГРАФИЯ РЫНКОВ
+Чикаго NW suburbs (Hammer): Buffalo Grove, Arlington Heights, Palatine, Schaumburg — средний доход, возраст домовладельцев, бюджеты на ремонт.
+Austin TX (Longhorn): Round Rock, Cedar Park, Georgetown, Kyle — те же метрики.
+Всегда ищи актуальные Census/ACS данные.
+
+### 6. ОТЧЁТЫ (/report)
+Генерируй структурированный еженедельный отчёт по команде /report:
+- Активность конкурентов за неделю
+- Трендовые форматы контента
+- Рыночные возможности
+- Топ-3 рекомендации
+
+---
+
+## Правила работы
+
+**ВЕБ-ПОИСК — ВСЕГДА**
+Перед каждым ответом, где нужны актуальные данные, делаешь web_search. Не даёшь устаревшую информацию. Если данные старше 6 месяцев — предупреждаешь.
+
+**ФОРМАТ ДАННЫХ**
+- Цифры везде где возможно: %, $, дни, рейтинги
+- Таблицы для сравнений
+- Источник в скобках: (Houzz 2024), (Google Reviews, апрель 2025)
+- Если данные недоступны — говоришь прямо: "точных данных нет, ориентировочно..."
 
 **ЛИЧНОСТЬ**
-Говоришь как management consultant, который зарабатывает за инсайт, а не за час работы. Аналитически, стратегически, без воды.
+Острый, прямой, конкретный. Говоришь как аналитик McKinsey — платишь за инсайт, не за слова.
+Не пишешь "возможно стоит рассмотреть". Пишешь "делай X — потому что Y, это даст Z%".
+
+**СВЯЗЬ С КАНОЙ**
+Когда находишь данные полезные для маркетинга — заканчиваешь ответ:
+"📢 *Для КАНЫ:* [конкретный инсайт для применения в контенте прямо сейчас]"
 
 **ЯЗЫК**
-Отвечаешь по-русски. Данные и термины могут быть на английском.`,
+Отвечаешь по-русски. Данные, названия брендов и метрики — на языке оригинала.`,
   },
 };
 
@@ -844,7 +894,7 @@ const AGENTS_MENU_TEXT = `👥 *Выбери агента:*
    Объясняет ошибки простым языком, мониторинг бота /status, помощь с техническими вопросами
 
 4. 📊 *ТИМ* — Аналитик
-   Анализ конкурентов, тренды, стратегия, отчёты, поиск данных
+   Анализ конкурентов, тренды, рыночные данные, бизнес-аналитика, еженедельный отчёт /report
 
 Переключить: /кана · /пятница · /усь · /тим`;
 
@@ -1009,7 +1059,8 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   history.push({ role: 'user', content: userMessage });
   trimHistory(history);
 
-  const useSearch = needsWebSearch(userMessage);
+  // ТИМ always gets web search; others get it only when the message triggers it
+  const useSearch = agentId === 'тим' || needsWebSearch(userMessage);
   const baseParams = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
@@ -1584,7 +1635,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
+    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/report — Еженедельный аналитический отчёт от ТИМ (конкуренты, тренды, рекомендации)\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -1598,6 +1649,91 @@ bot.onText(/\/strategy/, (msg) => {
   const chatId = msg.chat.id;
   strategySessions.set(chatId, { step: 1, answers: [] });
   bot.sendMessage(chatId, STRATEGY_QUESTIONS[0], { parse_mode: 'Markdown' });
+});
+
+// ---------------------------------------------------------------------------
+// ТИМ weekly report
+// ---------------------------------------------------------------------------
+
+async function generateTimReport(chatId) {
+  const reportPrompt = `${AGENTS['тим'].systemPrompt}
+
+Сегодня: ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
+
+Сгенерируй еженедельный аналитический отчёт. Используй web_search для получения актуальных данных по каждому разделу.
+
+Обязательные разделы:
+
+**1. АКТИВНОСТЬ КОНКУРЕНТОВ (последние 7 дней)**
+Ищи: Envy Home Services Chicago, Sunny Construction Chicago, Regency Home Services, Kitchen Village Arlington Heights.
+Что постили, какие акции запустили, новые отзывы. Таблица: Конкурент | Активность | Оценка угрозы.
+
+**2. ТРЕНДЫ В НИШЕ**
+Ищи: home remodeling trends 2025, bathroom remodel trends, contractor marketing social media.
+Топ-3 тренда с данными и применением для Hammer/Longhorn.
+
+**3. РЫНОЧНЫЕ ВОЗМОЖНОСТИ**
+Ищи: remodeling demand Chicago suburbs 2025, Austin TX home renovation market.
+2-3 конкретные возможности с обоснованием — цифры, сезонность, спрос.
+
+**4. КОНТЕНТНАЯ РАЗВЕДКА**
+Ищи: best performing contractor content Facebook Instagram 2025.
+Что работает в нише прямо сейчас: форматы, хуки, темы. Примеры с метриками.
+
+**5. ТОП-3 РЕКОМЕНДАЦИИ НА НЕДЕЛЮ**
+Конкретные действия для Hammer Remodeling и Longhorn Construction. С числами и дедлайнами.
+
+**📢 Для КАНЫ:**
+Топ-2 контентных инсайта для немедленного применения.
+
+Формат: структурированный, таблицы где уместно, цифры везде. Без воды.`;
+
+  const messages = [{ role: 'user', content: 'Сгенерируй еженедельный отчёт.' }];
+  let response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 6000,
+    system: reportPrompt,
+    tools: WEB_SEARCH_TOOL,
+    messages,
+  });
+
+  // Run the full tool loop
+  let safetyCounter = 0;
+  while (response.stop_reason === 'tool_use' && safetyCounter++ < 8) {
+    messages.push({ role: 'assistant', content: response.content });
+    const toolResults = response.content
+      .filter(b => b.type === 'tool_use')
+      .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' }));
+    messages.push({ role: 'user', content: toolResults });
+    response = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 6000,
+      system: reportPrompt,
+      tools: WEB_SEARCH_TOOL,
+      messages,
+    });
+  }
+
+  return extractText(response.content);
+}
+
+bot.onText(/\/report/, async (msg) => {
+  const chatId = msg.chat.id;
+  await setActiveAgent(chatId, 'тим');
+  bot.sendChatAction(chatId, 'typing');
+  await bot.sendMessage(chatId, '📊 *ТИМ:* Собираю данные, ищу по конкурентам и трендам... Займёт ~30 секунд.', { parse_mode: 'Markdown' });
+  try {
+    const report = await generateTimReport(chatId);
+    const header = `📊 *ТИМ — Еженедельный отчёт*\n_${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}_\n\n`;
+    const full = header + report;
+    const CHUNK = 4000;
+    for (let i = 0; i < full.length; i += CHUNK) {
+      await bot.sendMessage(chatId, full.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
+    }
+  } catch (err) {
+    console.error('/report error:', err.message);
+    bot.sendMessage(chatId, '📊 *ТИМ:* Не удалось собрать отчёт. Попробуй ещё раз или проверь /status.', { parse_mode: 'Markdown' });
+  }
 });
 
 bot.onText(/\/analytics/, async (msg) => {
