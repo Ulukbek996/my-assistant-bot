@@ -99,6 +99,31 @@ async function initDb() {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS idx_rem_due ON reminders(remind_at) WHERE NOT sent'
   );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tim_insights (
+      id           SERIAL PRIMARY KEY,
+      insight_type VARCHAR(50)  NOT NULL,
+      content      TEXT         NOT NULL,
+      created_at   TIMESTAMPTZ  DEFAULT NOW(),
+      used_by_kana BOOLEAN      DEFAULT FALSE
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_tim_type ON tim_insights(insight_type, created_at DESC)'
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kana_content (
+      id           SERIAL PRIMARY KEY,
+      chat_id      BIGINT       NOT NULL,
+      content_type VARCHAR(50)  NOT NULL,
+      text         TEXT         NOT NULL,
+      approved     BOOLEAN      DEFAULT FALSE,
+      created_at   TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_kana_chat ON kana_content(chat_id, created_at DESC)'
+  );
   console.log('Database tables ready.');
 }
 
@@ -166,6 +191,71 @@ async function detectAndSavePrefs(chatId, userMessage) {
   if (Object.keys(prefs).length > 0) {
     await upsertUserPrefs(chatId, prefs);
   }
+}
+
+// ---------------------------------------------------------------------------
+// ТИМ insights ↔ КАНА content shared memory
+// ---------------------------------------------------------------------------
+
+async function saveTimInsight(insightType, content) {
+  try {
+    await pool.query(
+      'INSERT INTO tim_insights (insight_type, content) VALUES ($1, $2)',
+      [insightType, content]
+    );
+  } catch (err) {
+    console.error('saveTimInsight error:', err.message);
+  }
+}
+
+// Returns the N most recent insights, optionally filtered by type
+async function getRecentTimInsights(limit = 3, insightType = null) {
+  try {
+    const query = insightType
+      ? 'SELECT insight_type, content, created_at FROM tim_insights WHERE insight_type = $1 ORDER BY created_at DESC LIMIT $2'
+      : 'SELECT insight_type, content, created_at FROM tim_insights ORDER BY created_at DESC LIMIT $1';
+    const params = insightType ? [insightType, limit] : [limit];
+    const res = await pool.query(query, params);
+    return res.rows;
+  } catch (err) {
+    console.error('getRecentTimInsights error:', err.message);
+    return [];
+  }
+}
+
+async function saveKanaContent(chatId, contentType, text) {
+  try {
+    await pool.query(
+      'INSERT INTO kana_content (chat_id, content_type, text) VALUES ($1, $2, $3)',
+      [chatId, contentType, text]
+    );
+  } catch (err) {
+    console.error('saveKanaContent error:', err.message);
+  }
+}
+
+async function markKanaContentApproved(chatId) {
+  try {
+    // Mark the most recent unapproved entry for this chat as approved
+    await pool.query(
+      `UPDATE kana_content SET approved = TRUE
+       WHERE id = (SELECT id FROM kana_content WHERE chat_id = $1 AND NOT approved ORDER BY created_at DESC LIMIT 1)`,
+      [chatId]
+    );
+  } catch (err) {
+    console.error('markKanaContentApproved error:', err.message);
+  }
+}
+
+// Detect what type of content КАНА just produced from the response text
+function detectKanaContentType(text) {
+  const t = text.toLowerCase();
+  if (/campaign|кампани/.test(t)) return 'campaign';
+  if (/funnel|воронк/.test(t)) return 'funnel';
+  if (/calendar|контент.план|content.*plan/.test(t)) return 'calendar';
+  if (/offer|оффер/.test(t)) return 'offer';
+  if (/caption|подпис|пост/.test(t)) return 'post';
+  return 'content';
 }
 
 
@@ -707,7 +797,7 @@ const AGENTS = {
     name: 'КАНА',
     emoji: '🎯',
     title: 'Маркетолог',
-    systemPrompt: `Ты КАНА — старший креативный директор и маркетинговый эксперт Улика. Говоришь прямо, по делу, с позиции эксперта. Никакой воды. Называешь слабый контент слабым сразу. Даёшь одну чёткую рекомендацию, не три варианта.
+    systemPrompt: `Ты КАНА — маркетинговый эксперт мирового уровня. Думаешь как Alex Hormozi ($100M Offers), Gary Vee и David Ogilvy одновременно. Одержим одной метрикой: сгенерированные лиды.
 
 ${BRAND_KNOWLEDGE}
 
@@ -719,25 +809,74 @@ ${LONGHORN_BRAND_KNOWLEDGE}
 
 ${MARKETING_RULES}
 
-## Как работаешь
+---
 
-**КОНТЕКСТНОЕ МЫШЛЕНИЕ**
-Отслеживаешь весь разговор. Ссылаешься на конкретику — если упоминался проект в Arlington Heights, вспоминаешь. Не обнуляешь контекст каждое сообщение.
+## МАРКЕТИНГОВЫЙ ФРЕЙМВОРК КАНЫ
+
+### 1. КРЮЧОК (первые 3 секунды решают всё)
+- Pattern interrupt — сломай ожидания читателя
+- Конкретное число бьёт расплывчатое утверждение: "$18,500 bathroom in 10 days" > "quality remodeling"
+- Pain-first (бей по боли) или dream-first (рисуй мечту) — зависит от уровня осведомлённости аудитории
+- Структуры хуков: [Число] + [Результат] + [Срок] | [Место] + [Трансформация] | [Вопрос-триггер боли]
+
+### 2. КОНСТРУКЦИЯ ОФФЕРА (Hormozi framework)
+Сильный оффер = Dream Outcome + Perceived Likelihood + Time Delay↓ + Effort/Sacrifice↓
+Для Hammer: "Complete bathroom transformation in 10 days, fixed price, zero surprises — or we pay the difference"
+Для Longhorn: адаптируй под Austin TX рынок
+Всегда стекай ценность и снижай риск через гарантию.
+
+### 3. ТАРГЕТИНГ
+Hammer: homeowners $150k–$300k доход, NW Chicago suburbs (Buffalo Grove, Arlington Heights, Palatine, Schaumburg, Northbrook, Glenview, Wilmette), возраст 35–65, own single family home, NOT condo/renters
+Longhorn: аналогичный профиль, Austin TX suburbs (Round Rock, Cedar Park, Georgetown, Kyle, Buda, Leander)
+Триггерные события: покупка дома (1–3 года назад), жизненное событие (новорождённый, родители переезжают), сезонность (март–июнь — пик ремонтного сезона)
+
+### 4. КОНТЕНТ ПО УРОВНЯМ ОСВЕДОМЛЁННОСТИ
+- Unaware → educational, problem agitation ("Why most homeowners regret cheap tile choices")
+- Problem aware → "3 signs your bathroom is costing you money"
+- Solution aware → comparison, competitor differentiation
+- Product aware → social proof, before/after, testimonials
+- Most aware → offer, urgency, hard CTA
+
+### 5. ФОРМУЛЫ РЕКЛАМНЫХ ПОСТОВ
+Before/After: "[Конкретный пригород] homeowner wanted [dream]. Here's what we did in [time]."
+Problem agitation: "3 signs your bathroom is costing you money (and how to fix it in 10 days)"
+Social proof: "47 families in Arlington Heights chose Hammer Remodeling. Here's why."
+Urgency: "We have 2 project slots open in [month]. First come first served."
+Seasonal: "Spring remodel season starts now. [Offer] for bookings before [date]."
+
+### 6. ЛИДОГЕНЕРАЦИЯ
+- Free estimate как лид-магнит
+- Seasonal promotions: spring remodel season (март–июнь), end-of-year budget spending (ноябрь–декабрь)
+- Referral program content
+- Google review request campaigns
+- Nextdoor neighborhood targeting
+
+### 7. ДАННЫЕ ОТ ТИМА
+В начале разговора тебе могут передать последние инсайты от Тима. Используй их при создании контента.
+Если нужны свежие данные о конкурентах, скажи: "Нужны данные от Тима — запусти /report или попроси Тима проанализировать конкурентов."
+
+---
+
+## КАК РАБОТАЕШЬ
+
+**СТРУКТУРА МЫШЛЕНИЯ**
+Для каждого поста думаешь: Внимание → Интерес → Желание → Действие.
+Называешь слабый контент слабым сразу. Не три варианта — одна чёткая рекомендация.
 
 **НЕЗАВИСИМОЕ МЫШЛЕНИЕ**
-Замечаешь вещи и говоришь о них без просьбы:
+Говоришь без просьбы:
 - "Три поста PROCESS подряд — алгоритм начнёт депри­оритизировать, нужен SOCIAL PROOF"
-- "Этот caption звучит как корпоративный пресс-релиз — вот версия, которая звучит по-человечески"
+- "Этот caption звучит как пресс-релиз — вот версия, которая звучит по-человечески"
 - При запросе поста → предлагаешь формат Stories в дополнение
-- При проблемной композиции фото → говоришь и объясняешь как исправить в Canva
+- При проблемной композиции → объясняешь как исправить в Canva
 
-**БЕЗ ШАБЛОНОВ**
-Каждый ответ — под эту конкретную ситуацию. Конкретные детали, прямые рекомендации.
+**БЕЗ ВОДЫ**
 - Никогда: "Отличный вопрос!", "Конечно!", филлеры
 - Никогда: расплывчатые советы без конкретного следующего шага
+- Всегда: конкретные числа, конкретный пригород, конкретный следующий шаг
 
 **ЯЗЫК**
-Отвечаешь на том языке, на котором пишет Улик. Русский → русский. English → English.`,
+Говоришь по-русски. Пишешь контент (посты, captions, ad copy) на английском.`,
   },
 
   пятница: {
@@ -914,7 +1053,7 @@ Austin TX (Longhorn): Round Rock, Cedar Park, Georgetown, Kyle — те же м�
 const AGENTS_MENU_TEXT = `👥 *Выбери агента:*
 
 1. 🎯 *КАНА* — Маркетолог
-   Анализ фото/видео, написание постов, контент-стратегия, публикация в Facebook/Instagram, аналитика, брендбук Hammer & Longhorn
+   Посты, рекламные кампании, оффер, воронки, контент-календарь. Команды: /campaign /funnel /offer /calendar
 
 2. 🤖 *ПЯТНИЦА* — Личный ассистент
    Любые задачи, вопросы, переводы, напоминания, поиск информации, документы, планирование
@@ -1112,12 +1251,24 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   history.push({ role: 'user', content: userMessage });
   trimHistory(history);
 
+  // КАНА: inject recent ТИМ insights into system prompt
+  let systemPrompt = agent.systemPrompt;
+  if (agentId === 'кана') {
+    const insights = await getRecentTimInsights(3);
+    if (insights.length > 0) {
+      const insightBlock = insights
+        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 400)}`)
+        .join('\n\n');
+      systemPrompt += `\n\n---\n## Последние данные от Тима\n${insightBlock}`;
+    }
+  }
+
   // ТИМ always gets web search; others get it only when the message triggers it
   const useSearch = agentId === 'тим' || needsWebSearch(userMessage);
   const baseParams = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
-    system: agent.systemPrompt,
+    system: systemPrompt,
   };
   if (useSearch) baseParams.tools = WEB_SEARCH_TOOL;
 
@@ -1144,6 +1295,21 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   saveMessageToDb(chatId, 'user', userMessage).catch(e => console.error('DB save error:', e.message));
   saveMessageToDb(chatId, 'assistant', assistantMessage).catch(e => console.error('DB save error:', e.message));
   detectAndSavePrefs(chatId, userMessage).catch(e => console.error('Prefs error:', e.message));
+
+  // ТИМ: save insights after any analysis
+  if (agentId === 'тим') {
+    const insightType = /конкурент|competitor|envy|sunny|regency|kitchen village/i.test(userMessage)
+      ? 'competitor' : /тренд|trend/i.test(userMessage)
+      ? 'trend' : /рынок|market|демограф/i.test(userMessage)
+      ? 'market' : 'general';
+    saveTimInsight(insightType, assistantMessage.slice(0, 2000)).catch(() => {});
+  }
+
+  // КАНА: save produced content to kana_content
+  if (agentId === 'кана' && assistantMessage.length > 100) {
+    const contentType = detectKanaContentType(userMessage + ' ' + assistantMessage);
+    saveKanaContent(chatId, contentType, assistantMessage.slice(0, 3000)).catch(() => {});
+  }
 
   return `${agent.emoji} *${agent.name}*\n\n${assistantMessage}`;
 }
@@ -1688,7 +1854,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/report — Еженедельный аналитический отчёт от ТИМ (конкуренты, тренды, рекомендации)\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
+    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/campaign [детали] — Полная рекламная кампания от КАНЫ\n/funnel [цель] — Контентная воронка по уровням осведомлённости\n/offer [детали] — Создать оффер по Hormozi framework\n/calendar [контекст] — Контент-календарь на 2 недели\n/report — Еженедельный аналитический отчёт от ТИМ (конкуренты, тренды, рекомендации)\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -1781,6 +1947,8 @@ bot.onText(/\/report/, async (msg) => {
   await bot.sendMessage(chatId, '📊 *ТИМ:* Собираю данные, ищу по конкурентам и трендам... Займёт ~30 секунд.', { parse_mode: 'Markdown' });
   try {
     const report = await generateTimReport(chatId);
+    // Save full report as insight for КАНА to use
+    saveTimInsight('weekly_report', report.slice(0, 2000)).catch(() => {});
     const header = `📊 *ТИМ — Еженедельный отчёт*\n_${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}_\n\n`;
     const full = header + report;
     const CHUNK = 4000;
@@ -1791,6 +1959,89 @@ bot.onText(/\/report/, async (msg) => {
     console.error('/report error:', err.message);
     bot.sendMessage(chatId, '📊 *ТИМ:* Не удалось собрать отчёт. Попробуй ещё раз или проверь /status.', { parse_mode: 'Markdown' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// КАНА commands: /campaign /funnel /offer /calendar
+// ---------------------------------------------------------------------------
+
+async function kanaCommand(chatId, taskPrompt, commandType) {
+  await setActiveAgent(chatId, 'кана');
+  bot.sendChatAction(chatId, 'typing');
+  try {
+    const reply = await askClaude(chatId, taskPrompt, 'кана');
+    // saveKanaContent already called inside askClaude
+    bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error(`/${commandType} error:`, err.message);
+    bot.sendMessage(chatId, `🎯 *КАНА:* Не удалось создать ${commandType}. Попробуй ещё раз.`, { parse_mode: 'Markdown' });
+  }
+}
+
+bot.onText(/\/campaign(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Создай полную рекламную кампанию для Facebook/Instagram.${extra ? ` Детали: ${extra}` : ''}
+
+Структура кампании:
+1. **HOOK** — 3 варианта крючка (выбери лучший и объясни почему)
+2. **AD COPY** — готовый текст объявления (по Hormozi framework)
+3. **CTA** — конкретный призыв к действию с контактом
+4. **IMAGE BRIEF** — точные инструкции для дизайнера (что на фото, текст overlay, логотип)
+5. **TARGETING** — конкретная аудитория (возраст, интересы, гео, поведение)
+6. **BUDGET RECOMMENDATION** — сколько тратить и на что
+7. **KPI** — что считать успехом (CPL цель, CTR норма)`;
+  await kanaCommand(chatId, prompt, 'campaign');
+});
+
+bot.onText(/\/funnel(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Построй контентную воронку.${extra ? ` Цель/контекст: ${extra}` : ''}
+
+Воронка по уровням осведомлённости:
+1. **UNAWARE** (2-3 поста) — темы, хуки, format
+2. **PROBLEM AWARE** (2-3 поста) — темы, хуки, format
+3. **SOLUTION AWARE** (2-3 поста) — темы, хуки, format
+4. **PRODUCT AWARE** (2-3 поста) — темы, хуки, format
+5. **MOST AWARE** (1-2 поста) — оффер, CTA, urgency
+
+Для каждого уровня: конкретные идеи постов с готовыми хуками.`;
+  await kanaCommand(chatId, prompt, 'funnel');
+});
+
+bot.onText(/\/offer(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Помоги создать неотразимый оффер по Hormozi framework.${extra ? ` Детали: ${extra}` : ''}
+
+Разбор оффера:
+1. **DREAM OUTCOME** — что получает клиент (конкретно)
+2. **PERCEIVED LIKELIHOOD** — почему поверят (доказательства)
+3. **TIME DELAY** — как минимизировать срок
+4. **EFFORT/SACRIFICE** — как снизить усилия клиента
+5. **RISK REVERSAL** — гарантия / страховка
+6. **ГОТОВЫЙ ОФФЕР** — финальная формулировка для рекламы
+7. **PRICE ANCHORING** — как подать цену чтобы она казалась дешёвой`;
+  await kanaCommand(chatId, prompt, 'offer');
+});
+
+bot.onText(/\/calendar(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Создай контент-календарь на 2 недели.${extra ? ` Контекст: ${extra}` : ''}
+
+Для каждого поста укажи:
+- День и дата (с сегодняшней даты)
+- Платформа (Facebook / Instagram / оба)
+- Тип контента (BEFORE/AFTER / PROCESS / EDUCATIONAL / SOCIAL PROOF / OFFER)
+- Уровень осведомлённости
+- Идея поста (1 предложение по-русски)
+- Готовый hook (на английском)
+- Готовый caption (на английском, со всеми хэштегами)
+
+Соотношение: 30% BEFORE/AFTER, 25% PROCESS, 20% EDUCATIONAL, 15% SOCIAL PROOF, 10% OFFER.`;
+  await kanaCommand(chatId, prompt, 'calendar');
 });
 
 bot.onText(/\/analytics/, async (msg) => {
@@ -2127,6 +2378,8 @@ bot.on('message', async (msg) => {
     if (normalized === 'ok' || normalized === 'ок') {
       postSessions.delete(chatId);
       bot.sendChatAction(chatId, 'typing');
+      // Mark the most recent КАНА content as approved
+      markKanaContentApproved(chatId).catch(() => {});
 
       if (session.publishBoth) {
         const results = await publishToBoth(session.text, session.pendingMedia);
