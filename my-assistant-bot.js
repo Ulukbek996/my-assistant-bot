@@ -35,6 +35,9 @@ const interviewSessions = new Map();
 
 // Strategy sessions: chatId -> { step: 1-5, answers: [] }
 const strategySessions = new Map();
+
+// Photo search sessions: chatId -> { query: string, usedQueries: string[] }
+const photoSearchSessions = new Map();
 // ---------------------------------------------------------------------------
 // PostgreSQL – persistent memory
 // ---------------------------------------------------------------------------
@@ -1174,11 +1177,57 @@ bot.onText(/\/clear/, async (msg) => {
   bot.sendMessage(chatId, 'All sessions cleared. Fresh start!');
 });
 
+// ---------------------------------------------------------------------------
+// Unsplash photo search
+// ---------------------------------------------------------------------------
+
+const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
+
+async function searchUnsplashPhotos(query) {
+  if (!UNSPLASH_ACCESS_KEY) throw new Error('UNSPLASH_ACCESS_KEY не настроен');
+  const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=5&client_id=${UNSPLASH_ACCESS_KEY}`;
+  const res = await axios.get(url);
+  return res.data.results.map(p => ({
+    url: p.urls.regular,
+    description: p.description || p.alt_description || query,
+    author: p.user.name,
+    authorLink: p.user.links.html,
+  }));
+}
+
+function buildPhotoMessage(photos, query) {
+  if (photos.length === 0) return `Не нашёл фото по запросу "${query}". Попробуй другое описание.`;
+  let msg = `🖼 *Фото по запросу:* "${query}"\n\n`;
+  photos.forEach((p, i) => {
+    msg += `*${i + 1}.* [${p.description.slice(0, 60)}](${p.url})\n📷 _by [${p.author}](${p.authorLink})_ (Unsplash)\n\n`;
+  });
+  msg += `_Напиши "не подходит" или "другие" — найду с другими ключевыми словами._`;
+  return msg;
+}
+
+bot.onText(/\/findphoto (.+)/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const query = match[1].trim();
+  bot.sendChatAction(chatId, 'typing');
+  try {
+    const photos = await searchUnsplashPhotos(query);
+    photoSearchSessions.set(chatId, { query, usedQueries: [query] });
+    await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { parse_mode: 'Markdown', disable_web_page_preview: false });
+  } catch (err) {
+    console.error('Unsplash error:', err.message);
+    bot.sendMessage(chatId, `Ошибка при поиске фото: ${err.message}`);
+  }
+});
+
+bot.onText(/\/findphoto$/, (msg) => {
+  bot.sendMessage(msg.chat.id, 'Укажи описание: /findphoto закат над горами');
+});
+
 bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Available commands:*\n\n/start — Welcome\n/clear — Clear all sessions and history\n/post [text] — Review & publish a text post\n/strategy — Build a content strategy (interview)\n/analytics — Facebook Page insights & recommendations\n/reminders — List your active reminders\n/cancelreminder [id] — Cancel a reminder by ID\n/help — This message\n\n*Photo flows:*\n• Photo + "проверь фото" → interview & creative brief\n• Photo + caption → direct review & publish\n• Photo only → caption suggestions\n\n*Other:*\n• Voice message → transcribe & respond\n• Video → frame analysis & creative brief\n• PDF/DOCX/TXT → document analysis\n• "напомни мне X в Y" → set a reminder`,
+    `*Available commands:*\n\n/start — Welcome\n/clear — Clear all sessions and history\n/post [text] — Review & publish a text post\n/strategy — Build a content strategy (interview)\n/analytics — Facebook Page insights & recommendations\n/reminders — List your active reminders\n/cancelreminder [id] — Cancel a reminder by ID\n/findphoto [description] — Search free photos on Unsplash\n/help — This message\n\n*Photo flows:*\n• Photo + "проверь фото" → interview & creative brief\n• Photo + caption → direct review & publish\n• Photo only → caption suggestions\n\n*Other:*\n• Voice message → transcribe & respond\n• Video → frame analysis & creative brief\n• PDF/DOCX/TXT → document analysis\n• "напомни мне X в Y" → set a reminder\n• After /findphoto: "не подходит" или "другие" → new search`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -1378,6 +1427,38 @@ bot.on('message', async (msg) => {
 
   // ── TEXT ONLY ──────────────────────────────────────────────────────────────
   if (!text || text.startsWith('/')) return;
+
+  // ── PHOTO SEARCH SESSION ───────────────────────────────────────────────────
+  if (photoSearchSessions.has(chatId) && text) {
+    const normalized = text.trim().toLowerCase();
+    if (normalized === 'не подходит' || normalized === 'другие' || normalized === 'ещё' || normalized === 'еще') {
+      const session = photoSearchSessions.get(chatId);
+      bot.sendChatAction(chatId, 'typing');
+      try {
+        // Ask Claude to suggest an alternative query
+        const altRes = await anthropic.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 100,
+          messages: [{
+            role: 'user',
+            content: `Suggest ONE alternative English search query for stock photos related to "${session.query}". Already tried: ${session.usedQueries.join(', ')}. Reply with ONLY the query, no explanation.`,
+          }],
+        });
+        const altQuery = altRes.content[0].text.trim().replace(/^["']|["']$/g, '');
+        session.usedQueries.push(altQuery);
+        photoSearchSessions.set(chatId, session);
+        const photos = await searchUnsplashPhotos(altQuery);
+        await bot.sendMessage(chatId, buildPhotoMessage(photos, altQuery), { parse_mode: 'Markdown', disable_web_page_preview: false });
+      } catch (err) {
+        console.error('Unsplash retry error:', err.message);
+        bot.sendMessage(chatId, `Ошибка при поиске: ${err.message}`);
+      }
+      return;
+    } else {
+      // User moved on — clear session
+      photoSearchSessions.delete(chatId);
+    }
+  }
 
   // ── STRATEGY SESSION ──────────────────────────────────────────────────────
   if (strategySessions.has(chatId)) {
