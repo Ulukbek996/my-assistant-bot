@@ -985,6 +985,30 @@ async function setActiveAgent(chatId, agentId) {
   await upsertUserPrefs(chatId, { activeAgent: agentId });
 }
 
+// Returns an immediate "thinking" message if ТИМ is about to do a long task,
+// or null for quick questions that don't need a progress indicator.
+function getTimThinkingMessage(text) {
+  if (!text) return null;
+  const t = text.toLowerCase();
+
+  if (/конкурент|competitor|envy|sunny|regency|kitchen village|rival|кухня вилладж/.test(t)) {
+    return '🔍 *ТИМ:* Начинаю анализ, изучаю сайты и рекламу... Займёт 1-2 минуты.';
+  }
+  if (/рынок|market research|исследован|демограф|demographic|целевая аудитори/.test(t)) {
+    return '📊 *ТИМ:* Запускаю исследование рынка, жди...';
+  }
+  if (/тренд|trend/.test(t)) {
+    return '📈 *ТИМ:* Ищу актуальные тренды в нише...';
+  }
+  if (/трафик|traffic|similarweb|реклам.*анализ|анализ.*реклам|ads library/.test(t)) {
+    return '🌐 *ТИМ:* Проверяю рекламу и трафик конкурентов...';
+  }
+  if (/найди|поищи|поиск|найти|проверь|изучи|собери данн|дай отчёт|дай анализ/.test(t)) {
+    return '🌐 *ТИМ:* Проверяю через интернет...';
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Claude helpers
 // ---------------------------------------------------------------------------
@@ -2211,6 +2235,10 @@ bot.on('message', async (msg) => {
     }
     // Switch and execute task immediately
     bot.sendChatAction(chatId, 'typing');
+    if (directive.agentId === 'тим') {
+      const thinking = getTimThinkingMessage(directive.task);
+      if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+    }
     try {
       const reply = await askClaude(chatId, directive.task, directive.agentId);
       bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
@@ -2223,6 +2251,11 @@ bot.on('message', async (msg) => {
 
   // ── REGULAR CONVERSATION ───────────────────────────────────────────────────
   bot.sendChatAction(chatId, 'typing');
+  const activeAgentId = await getActiveAgent(chatId);
+  if (activeAgentId === 'тим') {
+    const thinking = getTimThinkingMessage(text);
+    if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+  }
   try {
     const reply = await askClaude(chatId, text);
     errorCounts.delete('askClaude'); // reset on success
