@@ -223,6 +223,20 @@ async function getRecentTimInsights(limit = 3, insightType = null) {
   }
 }
 
+async function getRecentKanaContent(limit = 5) {
+  try {
+    const res = await pool.query(
+      `SELECT content_type, text, approved, created_at
+       FROM kana_content ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+    return res.rows;
+  } catch (err) {
+    console.error('getRecentKanaContent error:', err.message);
+    return [];
+  }
+}
+
 async function saveKanaContent(chatId, contentType, text) {
   try {
     await pool.query(
@@ -891,25 +905,50 @@ Seasonal: "Spring remodel season starts now. [Offer] for bookings before [date].
     name: 'ПЯТНИЦА',
     emoji: '🤖',
     title: 'Личный ассистент',
-    systemPrompt: `Ты ПЯТНИЦА — тёплый, умный личный ассистент Улика. Ты организованная, проактивная и по-настоящему полезная.
+    systemPrompt: `Ты ПЯТНИЦА — бизнес-ментор и личный стратег Улика. Думаешь как опытный предприниматель + бизнес-стратег + психолог. Уже построил несколько бизнесов. Говоришь как доверенный советник, который говорит правду, а не то, что хотят услышать.
 
-Контекст об Улике: владелец Hammer Remodeling LLC (пригороды Чикаго) и Longhorn Construction (Остин, TX). Управляет маркетингом, операциями и развитием бизнеса для обеих компаний.
+Улик — владелец Hammer Remodeling LLC (пригороды Чикаго) и Longhorn Construction (Остин, TX). Управляет маркетингом, операциями, командой и развитием обоих бизнесов.
 
-Помогаешь с: любыми задачами, вопросами, переводами, напоминаниями, поиском информации, документами, планированием, организацией — всем, что нужно.
+## ТВОИ СИЛЬНЫЕ СТОРОНЫ
 
-## Как работаешь
+**Бизнес-системы и масштабирование**
+Знаешь как строить процессы, делегировать, автоматизировать. Видишь где бизнес теряет деньги и время. Даёшь конкретные шаги — не концепции.
 
-**ЛИЧНОСТЬ**
-Тёплая, но эффективная. Не тратишь время впустую. Доводишь дела до конца и предвосхищаешь, что понадобится следующим. Говоришь как умный ассистент, который давно работает с Уликом и знает его приоритеты.
+**Финансы и инвестиции**
+Понимаешь юнит-экономику, CAC, LTV, margins. Когда нужно инвестировать, а когда сохранять. Где максимальный ROI для этого бизнеса прямо сейчас.
 
-**ПРОАКТИВНОСТЬ**
-После выполнения задачи добавляешь одно короткое наблюдение или предложение, о котором не спрашивали, но которое будет полезно. Максимум 1-2 предложения, конкретно.
+**Продажи и переговоры**
+Знаешь психологию покупки. Помогаешь закрывать сделки, работать с возражениями, выстраивать pipeline. Видишь разницу между проблемой клиента и симптомом.
 
-**КОНТЕКСТНОЕ МЫШЛЕНИЕ**
-Отслеживаешь весь разговор. Помнишь детали. Не обнуляешь контекст каждое сообщение.
+**Психология**
+Понимаешь когда Улик принимает эмоциональное решение вместо рационального. Называешь это прямо. Помогаешь с коммуникацией с командой, клиентами, партнёрами.
 
-**ЯЗЫК**
-Всегда отвечаешь по-русски если Улик пишет на русском. English → English.`,
+## ДАННЫЕ ОТ АГЕНТОВ
+В начале разговора тебе передаются последние данные от Тима и Каны (аналитика и созданный контент).
+Используй эти данные чтобы:
+- Замечать паттерны которые сам Улик не видит
+- Предлагать связи между данными агентов ("Тим нашёл X, Кана не использовал — хочешь я скажу Кане атаковать эту нишу?")
+- Оценивать согласованность маркетинга и стратегии
+
+## ПРОАКТИВНЫЕ СИГНАЛЫ (только когда реально ценно)
+- 💡 *Пятница:* Заметил кое-что... — когда видишь возможность
+- ⚠️ *Пятница:* Стоит обдумать... — когда видишь риск
+- 🚀 *Пятница:* Идея по масштабированию... — когда видишь точку роста
+Никогда не шумишь — только сигнал.
+
+## КАК РАБОТАЕШЬ
+
+**Перед каждым ответом думаешь:**
+Какое решение нужно принять этому человеку? Какая информация нужна для хорошего решения?
+
+**Форматирование**
+Максимум 5-7 предложений если не глубокий анализ. Задаёшь уточняющий вопрос когда нужна информация для хорошего совета.
+
+**Веб-поиск**
+Используешь когда нужны актуальные рыночные данные, цены, тренды, конкурентная среда.
+
+**Язык**
+Отвечаешь по-русски. Чёткий, прямой, без воды. Никаких филлеров.`,
   },
 
   усь: {
@@ -1062,8 +1101,8 @@ const AGENTS_MENU_TEXT = `👥 *Выбери агента:*
 1. 🎯 *КАНА* — Маркетолог
    Посты, рекламные кампании, оффер, воронки, контент-календарь. Команды: /campaign /funnel /offer /calendar
 
-2. 🤖 *ПЯТНИЦА* — Личный ассистент
-   Любые задачи, вопросы, переводы, напоминания, поиск информации, документы, планирование
+2. 🤖 *ПЯТНИЦА* — Бизнес-стратег
+   Стратегия, масштабирование, инвестиции, психология продаж, координация агентов. Команды: /brief /strategy /scale /invest
 
 3. 🔧 *УСЬ* — Тех поддержка
    Объясняет ошибки простым языком, мониторинг бота /status, помощь с техническими вопросами
@@ -1187,6 +1226,21 @@ function getKanaThinkingMessage(text, commandType = null) {
   return null;
 }
 
+function getPyatnitsaThinkingMessage(text, commandType = null) {
+  if (commandType === 'brief')    return '🤖 *ПЯТНИЦА:* Проверяю данные всех агентов... Секунду.';
+  if (commandType === 'strategy') return '🤖 *ПЯТНИЦА:* Готовлю стратегическую сессию... Жди.';
+  if (commandType === 'scale')    return '🤖 *ПЯТНИЦА:* Анализирую возможности масштабирования... Минуту.';
+  if (commandType === 'invest')   return '🤖 *ПЯТНИЦА:* Анализирую куда лучше вложить ресурсы... Жди.';
+
+  if (!text) return null;
+  const t = text.toLowerCase();
+  if (/стратеги|strategy|план.*бизнес|бизнес.*план/.test(t)) return '🤖 *ПЯТНИЦА:* Думаю над стратегией... Жди.';
+  if (/масштаб|scale|расшир|growth/.test(t))                  return '🤖 *ПЯТНИЦА:* Анализирую возможности роста... Секунду.';
+  if (/инвест|invest|вложить|allocat/.test(t))                 return '🤖 *ПЯТНИЦА:* Смотрю на приоритеты по инвестициям... Жди.';
+  if (/анализ|проверь|посмотри|что происходит|как дела/.test(t)) return '🤖 *ПЯТНИЦА:* Проверяю данные агентов... Секунду.';
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Claude helpers
 // ---------------------------------------------------------------------------
@@ -1290,7 +1344,7 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   history.push({ role: 'user', content: userMessage });
   trimHistory(history);
 
-  // КАНА: inject recent ТИМ insights into system prompt
+  // Inject cross-agent context into system prompt
   let systemPrompt = agent.systemPrompt;
   if (agentId === 'кана') {
     const insights = await getRecentTimInsights(3);
@@ -1301,9 +1355,30 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
       systemPrompt += `\n\n---\n## Последние данные от Тима\n${insightBlock}`;
     }
   }
+  if (agentId === 'пятница') {
+    const [insights, kanaContent] = await Promise.all([
+      getRecentTimInsights(4),
+      getRecentKanaContent(4),
+    ]);
+    let crossAgentBlock = '';
+    if (insights.length > 0) {
+      crossAgentBlock += '\n\n### Последние данные от Тима\n' + insights
+        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 300)}`)
+        .join('\n\n');
+    }
+    if (kanaContent.length > 0) {
+      crossAgentBlock += '\n\n### Последний контент от Каны\n' + kanaContent
+        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.content_type} | ${r.approved ? 'одобрено' : 'не одобрено'}] ${r.text.slice(0, 200)}`)
+        .join('\n\n');
+    }
+    if (crossAgentBlock) systemPrompt += `\n\n---\n## Данные агентов${crossAgentBlock}`;
+  }
 
-  // ТИМ always gets web search; others get it only when the message triggers it
-  const useSearch = agentId === 'тим' || needsWebSearch(userMessage);
+  // ТИМ always gets web search; ПЯТНИЦА gets it on business/strategy triggers + standard triggers; others on keyword match
+  const needsSearch = agentId === 'тим'
+    || (agentId === 'пятница' && /рынок|конкурент|цена|прайс|competitor|market|pricing|invest|инвест|масштаб|scale|revenue|выручк|тренд|trend/.test(userMessage.toLowerCase()))
+    || needsWebSearch(userMessage);
+  const useSearch = needsSearch;
   const baseParams = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
@@ -1893,7 +1968,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/campaign [детали] — Полная рекламная кампания от КАНЫ\n/funnel [цель] — Контентная воронка по уровням осведомлённости\n/offer [детали] — Создать оффер по Hormozi framework\n/calendar [контекст] — Контент-календарь на 2 недели\n/report — Еженедельный аналитический отчёт от ТИМ (конкуренты, тренды, рекомендации)\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
+    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/brief — Брифинг по всем агентам и текущему состоянию бизнеса\n/strategy [фокус] — Стратегическая сессия с планом на 90 дней\n/scale [контекст] — Анализ возможностей масштабирования Hammer и Longhorn\n/invest [контекст] — Приоритеты вложений и распределение ресурсов\n/campaign [детали] — Полная рекламная кампания от КАНЫ\n/funnel [цель] — Контентная воронка по уровням осведомлённости\n/offer [детали] — Создать оффер по Hormozi framework\n/calendar [контекст] — Контент-календарь на 2 недели\n/plan — Построить контент-план (КАНА, интервью по компании)\n/report — Еженедельный аналитический отчёт от ТИМ (конкуренты, тренды, рекомендации)\n/status — Проверить состояние бота (БД, токены, ключи)\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -1903,7 +1978,7 @@ bot.onText(/\/post (.+)/s, async (msg, match) => {
   await handlePostFlow(chatId, match[1].trim());
 });
 
-bot.onText(/\/strategy/, (msg) => {
+bot.onText(/\/plan/, (msg) => {
   const chatId = msg.chat.id;
   strategySessions.set(chatId, { step: 1, answers: [] });
   bot.sendMessage(chatId, STRATEGY_QUESTIONS[0], { parse_mode: 'Markdown' });
@@ -1978,6 +2053,102 @@ async function generateTimReport(chatId) {
 
   return extractText(response.content);
 }
+
+// ---------------------------------------------------------------------------
+// ПЯТНИЦА commands: /brief /strategy /scale /invest
+// ---------------------------------------------------------------------------
+
+async function pyatnitsaCommand(chatId, taskPrompt, commandType) {
+  await setActiveAgent(chatId, 'пятница');
+  bot.sendChatAction(chatId, 'typing');
+  const thinking = getPyatnitsaThinkingMessage(null, commandType);
+  if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+  try {
+    const reply = await askClaude(chatId, taskPrompt, 'пятница');
+    const CHUNK = 4000;
+    for (let i = 0; i < reply.length; i += CHUNK) {
+      await bot.sendMessage(chatId, reply.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
+    }
+  } catch (err) {
+    console.error(`/${commandType} error:`, err.message);
+    bot.sendMessage(chatId, `🤖 *ПЯТНИЦА:* Не удалось выполнить задачу. Попробуй ещё раз.`, { parse_mode: 'Markdown' });
+  }
+}
+
+bot.onText(/\/brief/, async (msg) => {
+  const chatId = msg.chat.id;
+  const prompt = `Дай краткий брифинг по всем агентам и текущему состоянию бизнеса.
+
+Используй данные из контекста (данные от Тима и Каны переданы тебе автоматически).
+
+Структура брифинга:
+**📊 Тим — последние данные:** что нашёл, какие инсайты по конкурентам/рынку
+**🎯 Кана — последний контент:** что создавал, что одобрено
+**💡 Что я вижу:** паттерны, которые сам Улик мог не заметить, связи между данными агентов
+**⚡ Топ-3 действия прямо сейчас:** конкретные шаги с обоснованием
+
+Если данных от агентов нет — скажи об этом прямо и предложи запустить /report.
+Максимум 300 слов. Только сигнал, никакого шума.`;
+  await pyatnitsaCommand(chatId, prompt, 'brief');
+});
+
+bot.onText(/\/strategy(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Проведи глубокую стратегическую сессию.${extra ? ` Фокус: ${extra}` : ''}
+
+Структура:
+**1. Где бизнес сейчас** — честная оценка текущего состояния Hammer и Longhorn
+**2. Главные точки роста** — топ-3 возможности с наибольшим потенциалом ROI
+**3. Главные риски** — что может заблокировать рост в ближайшие 90 дней
+**4. Приоритетный план на 90 дней** — конкретные шаги с метриками успеха
+**5. Один вопрос** — самый важный вопрос который Улику нужно ответить самому себе
+
+Опирайся на данные агентов из контекста. Используй веб-поиск для актуальных рыночных данных если нужно.`;
+  await pyatnitsaCommand(chatId, prompt, 'strategy');
+});
+
+bot.onText(/\/scale(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Проанализируй конкретные возможности масштабирования.${extra ? ` Контекст: ${extra}` : ''}
+
+Дай анализ по каждому направлению:
+
+**🔨 Hammer Remodeling (Чикаго)**
+- Текущие ограничения роста (люди, процессы, маркетинг, финансы)
+- 3 конкретных рычага масштабирования с примерным ROI
+- Первый шаг который можно сделать на этой неделе
+
+**🤠 Longhorn Construction (Остин)**
+- Текущие ограничения роста
+- 3 конкретных рычага масштабирования
+- Первый шаг на этой неделе
+
+**🔗 Синергия между бизнесами**
+- Где Hammer и Longhorn могут усилить друг друга (операции, маркетинг, закупки)
+
+Используй веб-поиск для данных по рынку Чикаго и Остина если нужно.`;
+  await pyatnitsaCommand(chatId, prompt, 'scale');
+});
+
+bot.onText(/\/invest(?:\s+(.+))?/s, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const extra = match[1]?.trim() || '';
+  const prompt = `Дай рекомендации по приоритетам вложений и распределению ресурсов.${extra ? ` Контекст: ${extra}` : ''}
+
+**1. Аудит текущих расходов** — где деньги, что даёт ROI, что нет
+**2. Приоритеты вложений по убыванию ROI:**
+   - Маркетинг (реклама, SEO, соцсети)
+   - Операции (команда, инструменты, процессы)
+   - Технологии (автоматизация, CRM, боты)
+   - Резерв и масштабирование
+**3. Конкретные рекомендации** — куда вложить следующие $5k, $20k, $50k
+**4. Что НЕ стоит финансировать** — честный анализ где деньги уходят без отдачи
+
+Используй данные агентов и веб-поиск для бенчмарков по отрасли.`;
+  await pyatnitsaCommand(chatId, prompt, 'invest');
+});
 
 bot.onText(/\/report/, async (msg) => {
   const chatId = msg.chat.id;
@@ -2535,6 +2706,9 @@ bot.on('message', async (msg) => {
     } else if (directive.agentId === 'кана') {
       const thinking = getKanaThinkingMessage(directive.task);
       if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+    } else if (directive.agentId === 'пятница') {
+      const thinking = getPyatnitsaThinkingMessage(directive.task);
+      if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
     }
     try {
       const reply = await askClaude(chatId, directive.task, directive.agentId);
@@ -2554,6 +2728,9 @@ bot.on('message', async (msg) => {
     if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
   } else if (activeAgentId === 'кана') {
     const thinking = getKanaThinkingMessage(text);
+    if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+  } else if (activeAgentId === 'пятница') {
+    const thinking = getPyatnitsaThinkingMessage(text);
     if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
   }
   try {
