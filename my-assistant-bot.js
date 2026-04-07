@@ -41,6 +41,11 @@ const strategySessions = new Map();
 
 // Photo search sessions: chatId -> { query: string, usedQueries: string[] }
 const photoSearchSessions = new Map();
+
+// Auto-healing: last active chat per user (for УСЬ notifications)
+let lastActiveChatId = null;
+const lastActiveTime = new Map(); // chatId -> timestamp (for session cleanup)
+const errorCounts = new Map();    // key -> { count, lastError, lastTime }
 // ---------------------------------------------------------------------------
 // PostgreSQL – persistent memory
 // ---------------------------------------------------------------------------
@@ -1525,16 +1530,26 @@ async function extractPhotoQuery(text) {
   return res.content[0].text.trim().replace(/^["'`]|["'`]$/g, '');
 }
 
-async function searchUnsplashPhotos(query) {
+async function searchUnsplashPhotos(query, attempt = 0) {
   if (!UNSPLASH_ACCESS_KEY) throw new Error('UNSPLASH_ACCESS_KEY не настроен');
   const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=5&client_id=${UNSPLASH_ACCESS_KEY}`;
-  const res = await axios.get(url);
-  return res.data.results.map(p => ({
-    url: p.urls.regular,
-    description: p.description || p.alt_description || query,
-    author: p.user.name,
-    authorLink: p.user.links.html,
-  }));
+  try {
+    const res = await axios.get(url, { timeout: 8000 });
+    return res.data.results.map(p => ({
+      url: p.urls.regular,
+      description: p.description || p.alt_description || query,
+      author: p.user.name,
+      authorLink: p.user.links.html,
+    }));
+  } catch (err) {
+    const retryable = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED' || (err.response?.status >= 500);
+    if (attempt < 2 && retryable) {
+      console.log(`Unsplash retry ${attempt + 1} for query "${query}"`);
+      await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+      return searchUnsplashPhotos(query, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 function buildPhotoMessage(photos, query) {
@@ -1645,6 +1660,8 @@ bot.onText(/\/cancelreminder\s+(\d+)/, async (msg, match) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
+  lastActiveChatId = chatId;
+  lastActiveTime.set(chatId, Date.now());
 
   // ── PHOTO ──────────────────────────────────────────────────────────────────
   if (msg.photo) {
@@ -1691,13 +1708,15 @@ bot.on('message', async (msg) => {
     try {
       const audioBuffer = await downloadTelegramFile(msg.voice.file_id);
       const transcribed = await transcribeVoice(audioBuffer);
+      errorCounts.delete('voiceHandler');
       await bot.sendMessage(chatId, `🎤 _"${transcribed}"_`, { parse_mode: 'Markdown' });
       // Process as regular message
       const reply = await askClaude(chatId, transcribed);
       bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
     } catch (err) {
       console.error('Voice error:', err.message);
-      bot.sendMessage(chatId, 'Не удалось расшифровать голосовое сообщение. Попробуй ещё раз.');
+      monitorError('voiceHandler', err, chatId);
+      bot.sendMessage(chatId, 'Не удалось расшифровать голосовое. Попробуй ещё раз.');
     }
     return;
   }
@@ -1934,11 +1953,13 @@ bot.on('message', async (msg) => {
       } else {
         try {
           await publishToFacebook(session.text, session.pendingMedia);
-          bot.sendMessage(chatId, 'Posted to Facebook successfully!');
+          errorCounts.delete('fbPublish');
+          bot.sendMessage(chatId, '✅ Опубликовано в Facebook!');
           savePublishedPost(chatId, session.text, 'facebook').catch(e => console.error('DB error:', e.message));
         } catch (err) {
           console.error('Facebook publish error:', err.response?.data || err.message);
-          bot.sendMessage(chatId, `Failed to publish: ${err.response?.data?.error?.message || err.message}`);
+          monitorError('fbPublish', err, chatId);
+          bot.sendMessage(chatId, `❌ Не удалось опубликовать: ${err.response?.data?.error?.message || err.message}`);
         }
       }
     } else {
@@ -2035,23 +2056,176 @@ bot.on('message', async (msg) => {
   bot.sendChatAction(chatId, 'typing');
   try {
     const reply = await askClaude(chatId, text);
+    errorCounts.delete('askClaude'); // reset on success
     bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
   } catch (err) {
     console.error('Error calling Claude API:', err.message);
+    monitorError('askClaude', err, chatId);
     if (err.status === 401) {
-      bot.sendMessage(chatId, 'API key error. Please check ANTHROPIC_API_KEY.');
+      bot.sendMessage(chatId, '🔧 *УСЬ:* Ключ API не работает. Напиши /status чтобы проверить.', { parse_mode: 'Markdown' });
     } else if (err.status === 429) {
-      bot.sendMessage(chatId, 'Too many requests. Please wait a moment.');
+      bot.sendMessage(chatId, 'Слишком много запросов. Подожди минуту и попробуй снова.');
     } else {
-      bot.sendMessage(chatId, 'Something went wrong. Please try again.');
+      bot.sendMessage(chatId, 'Что-то пошло не так. Попробуй ещё раз.');
     }
   }
 });
 
-bot.on('polling_error', (err) => {
-  console.error('Polling error:', err.message);
+// ---------------------------------------------------------------------------
+// Auto-healing system (УСЬ)
+// ---------------------------------------------------------------------------
+
+function ushNotify(message) {
+  if (!lastActiveChatId) return;
+  bot.sendMessage(lastActiveChatId, `🔧 *УСЬ:* ${message}`, { parse_mode: 'Markdown' })
+    .catch(e => console.error('ushNotify failed:', e.message));
+}
+
+// Track repeated errors — returns current consecutive count for the key
+function trackError(key, err) {
+  const now = Date.now();
+  const entry = errorCounts.get(key) || { count: 0, lastTime: 0 };
+  if (now - entry.lastTime > 10 * 60 * 1000) {
+    // Reset if more than 10 minutes since last error in this category
+    errorCounts.set(key, { count: 1, lastError: err.message, lastTime: now });
+    return 1;
+  }
+  entry.count++;
+  entry.lastError = err.message;
+  entry.lastTime = now;
+  errorCounts.set(key, entry);
+  return entry.count;
+}
+
+// ── 1. DB auto-reconnect ───────────────────────────────────────────────────
+let dbReconnectAttempts = 0;
+
+pool.on('error', async (err) => {
+  console.error('DB pool error:', err.message);
+  dbReconnectAttempts++;
+
+  if (dbReconnectAttempts > 3) {
+    ushNotify(`База данных падала ${dbReconnectAttempts} раз и не восстановилась. Нужно перезапустить сервис на Railway → Deployments → Redeploy.`);
+    return;
+  }
+
+  // pg Pool reconnects automatically; verify the connection came back
+  let recovered = false;
+  for (let i = 0; i < 3; i++) {
+    await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+    try {
+      await pool.query('SELECT 1');
+      recovered = true;
+      break;
+    } catch {}
+  }
+
+  if (recovered) {
+    console.log(`DB reconnected after ${dbReconnectAttempts} attempt(s)`);
+    dbReconnectAttempts = 0;
+  } else {
+    ushNotify(`База данных упала, пытаюсь починить... Попытка ${dbReconnectAttempts}/3 — пока не получается. Если через минуту не восстановится — перезапусти бота на Railway.`);
+  }
 });
 
-initDb().catch(err => console.error('DB init failed:', err.message));
+// ── 2. Polling auto-restart ────────────────────────────────────────────────
+let pollingRetries = 0;
+const MAX_POLLING_RETRIES = 5;
+
+bot.on('polling_error', async (err) => {
+  console.error('Polling error:', err.code, err.message);
+
+  if (err.code !== 'EFATAL' && err.code !== 'ETELEGRAM') return; // transient, ignore
+
+  pollingRetries++;
+  if (pollingRetries > MAX_POLLING_RETRIES) {
+    ushNotify(`Потерял связь с Telegram ${pollingRetries} раз и не смог восстановить. Нужен ручной перезапуск на Railway.`);
+    return;
+  }
+
+  console.log(`Polling restart attempt ${pollingRetries}/${MAX_POLLING_RETRIES} in 5s...`);
+  await new Promise(r => setTimeout(r, 5000));
+  try {
+    await bot.stopPolling();
+    await bot.startPolling();
+    console.log('Polling restarted OK');
+    pollingRetries = 0;
+  } catch (restartErr) {
+    console.error('Polling restart failed:', restartErr.message);
+    if (pollingRetries >= MAX_POLLING_RETRIES) {
+      ushNotify(`Не могу восстановить соединение с Telegram. Перезапусти бота на Railway вручную.`);
+    }
+  }
+});
+
+// ── 3. Session cleanup (every hour) ───────────────────────────────────────
+function cleanupExpiredSessions() {
+  const now = Date.now();
+  const TTL = 2 * 60 * 60 * 1000; // 2 hours
+  let cleaned = 0;
+
+  for (const sessions of [postSessions, captionSessions, interviewSessions, strategySessions, photoSearchSessions]) {
+    for (const chatId of sessions.keys()) {
+      const lastActive = lastActiveTime.get(chatId) || 0;
+      if (now - lastActive > TTL) {
+        sessions.delete(chatId);
+        cleaned++;
+      }
+    }
+  }
+
+  if (cleaned > 0) console.log(`Session cleanup: removed ${cleaned} stale entries`);
+}
+
+// ── 4. Anthropic API health check (startup + every 6 hours) ───────────────
+async function checkAnthropicHealth() {
+  try {
+    await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 5,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    console.log('Anthropic API health check OK');
+  } catch (err) {
+    console.error('Anthropic API health check failed:', err.message);
+    if (err.status === 401) {
+      ushNotify('Anthropic API не отвечает — ключ недействителен. Обнови `ANTHROPIC_API_KEY` в настройках Railway.');
+    } else if (err.status === 429) {
+      ushNotify('Anthropic API: слишком много запросов. Подожди пару минут, потом попробуй снова.');
+    } else {
+      ushNotify(`Anthropic API не отвечает (${err.status || err.code}). Проверь ключ или статус на status.anthropic.com.`);
+    }
+  }
+}
+
+// ── 6. Error monitoring wrapper ────────────────────────────────────────────
+// Maps friendly user-facing messages to specific error categories
+const ERROR_EXPLANATIONS = {
+  askClaude:    n => `Claudе не отвечает ${n} раза подряд — проблема с AI. Проверь ANTHROPIC_API_KEY через /status.`,
+  fbPublish:    n => `Публикация в Facebook не работает ${n} раза подряд. Возможно истёк токен — проверь через /status.`,
+  voiceHandler: n => `Расшифровка голоса не работает ${n} раза подряд. Проверь OPENAI_API_KEY через /status.`,
+};
+
+function monitorError(key, err, chatId) {
+  const count = trackError(key, err);
+  if (count >= 3 && ERROR_EXPLANATIONS[key]) {
+    ushNotify(ERROR_EXPLANATIONS[key](count));
+    errorCounts.get(key).count = 0; // Reset after notifying to avoid spam
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+async function startup() {
+  await initDb();
+  console.log('Bot is running...');
+  // Delay health check to give Railway time to settle after cold start
+  setTimeout(checkAnthropicHealth, 8000);
+}
+
+startup().catch(err => console.error('Startup failed:', err.message));
 setInterval(checkAndSendReminders, 60 * 1000);
-console.log('Bot is running...');
+setInterval(cleanupExpiredSessions, 60 * 60 * 1000);        // every hour
+setInterval(checkAnthropicHealth, 6 * 60 * 60 * 1000);      // every 6 hours
