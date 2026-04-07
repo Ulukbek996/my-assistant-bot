@@ -1148,6 +1148,38 @@ function getTimThinkingMessage(text) {
   return null;
 }
 
+function getKanaThinkingMessage(text, commandType = null) {
+  // Called from /campaign /funnel /offer /calendar — use commandType directly
+  if (commandType === 'campaign') return '🎯 *КАНА:* Запускаю анализ и строю кампанию... Займёт минуту.';
+  if (commandType === 'funnel')   return '🎯 *КАНА:* Строю воронку по уровням осведомлённости... Жди.';
+  if (commandType === 'offer')    return '🎯 *КАНА:* Конструирую оффер по Hormozi... Секунду.';
+  if (commandType === 'calendar') return '🎯 *КАНА:* Пишу контент-календарь на 2 недели... Жди.';
+
+  // Called from chat — detect from message text
+  if (!text) return null;
+  const t = text.toLowerCase();
+
+  if (/кампани|campaign|рекламн|ad copy|объявлени/.test(t)) {
+    return '🎯 *КАНА:* Запускаю анализ и строю кампанию... Займёт минуту.';
+  }
+  if (/воронк|funnel|уровн.*осведомл/.test(t)) {
+    return '🎯 *КАНА:* Строю воронку по уровням осведомлённости... Жди.';
+  }
+  if (/оффер|offer|предложени.*hormozi|hormozi/.test(t)) {
+    return '🎯 *КАНА:* Конструирую оффер по Hormozi... Секунду.';
+  }
+  if (/календар|calendar|контент.план|расписани.*пост/.test(t)) {
+    return '🎯 *КАНА:* Пишу контент-календарь на 2 недели... Жди.';
+  }
+  if (/напиши пост|создай пост|write.*post|соцсет|caption|подпис/.test(t)) {
+    return '🎯 *КАНА:* Создаю пост, применяю фреймворк Hormozi... Секунду.';
+  }
+  if (/стратеги|strategy|контент.*план|план.*контент/.test(t)) {
+    return '🎯 *КАНА:* Разрабатываю стратегию... Жди.';
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Claude helpers
 // ---------------------------------------------------------------------------
@@ -1968,6 +2000,8 @@ bot.onText(/\/report/, async (msg) => {
 async function kanaCommand(chatId, taskPrompt, commandType) {
   await setActiveAgent(chatId, 'кана');
   bot.sendChatAction(chatId, 'typing');
+  const thinking = getKanaThinkingMessage(null, commandType);
+  if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
   try {
     const reply = await askClaude(chatId, taskPrompt, 'кана');
     // saveKanaContent already called inside askClaude
@@ -2491,6 +2525,9 @@ bot.on('message', async (msg) => {
     if (directive.agentId === 'тим') {
       const thinking = getTimThinkingMessage(directive.task);
       if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+    } else if (directive.agentId === 'кана') {
+      const thinking = getKanaThinkingMessage(directive.task);
+      if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
     }
     try {
       const reply = await askClaude(chatId, directive.task, directive.agentId);
@@ -2507,6 +2544,9 @@ bot.on('message', async (msg) => {
   const activeAgentId = await getActiveAgent(chatId);
   if (activeAgentId === 'тим') {
     const thinking = getTimThinkingMessage(text);
+    if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+  } else if (activeAgentId === 'кана') {
+    const thinking = getKanaThinkingMessage(text);
     if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
   }
   try {
