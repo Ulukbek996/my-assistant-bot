@@ -209,12 +209,17 @@ async function saveTimInsight(insightType, content) {
 }
 
 // Returns the N most recent insights, optionally filtered by type
-async function getRecentTimInsights(limit = 3, insightType = null) {
+async function getRecentTimInsights(limit = 3, insightType = null, maxAgeDays = null) {
   try {
-    const query = insightType
-      ? 'SELECT insight_type, content, created_at FROM tim_insights WHERE insight_type = $1 ORDER BY created_at DESC LIMIT $2'
-      : 'SELECT insight_type, content, created_at FROM tim_insights ORDER BY created_at DESC LIMIT $1';
-    const params = insightType ? [insightType, limit] : [limit];
+    let query, params;
+    const ageFilter = maxAgeDays ? ` AND created_at >= NOW() - INTERVAL '${parseInt(maxAgeDays, 10)} days'` : '';
+    if (insightType) {
+      query = `SELECT insight_type, content, created_at FROM tim_insights WHERE insight_type = $1${ageFilter} ORDER BY created_at DESC LIMIT $2`;
+      params = [insightType, limit];
+    } else {
+      query = `SELECT insight_type, content, created_at FROM tim_insights WHERE 1=1${ageFilter} ORDER BY created_at DESC LIMIT $1`;
+      params = [limit];
+    }
     const res = await pool.query(query, params);
     return res.rows;
   } catch (err) {
@@ -1352,13 +1357,24 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
 
   // Inject cross-agent context into system prompt
   let systemPrompt = agent.systemPrompt;
+  let kanaForcedSearch = false;
   if (agentId === 'кана') {
-    const insights = await getRecentTimInsights(3);
-    if (insights.length > 0) {
-      const insightBlock = insights
+    const isContentRequest = /пост|campaign|кампани|funnel|фанел|offer|оффер|calendar|календар|контент|caption|подпись|реклам|ad |ads|hashtag|хэштег|текст для|напиши|создай|придумай/.test(userMessage.toLowerCase());
+    const needsMarketData = /конкурент|competitor|рынок|market|тренд|trend|аудитор|audience|цен|price/.test(userMessage.toLowerCase());
+    // Always pull fresh 7-day insights for context injection
+    const recentInsights = await getRecentTimInsights(5, null, 7);
+    if (recentInsights.length > 0) {
+      const insightBlock = recentInsights
         .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 400)}`)
         .join('\n\n');
-      systemPrompt += `\n\n---\n## Последние данные от Тима\n${insightBlock}`;
+      systemPrompt += `\n\n---\n## Последние данные от Тима (последние 7 дней)\n${insightBlock}`;
+      if (isContentRequest) {
+        bot.sendMessage(chatId, '🔗 *Кана:* Использую последние данные от Тима для создания контента...', { parse_mode: 'Markdown' }).catch(() => {});
+      }
+    } else if (isContentRequest && needsMarketData) {
+      // No Tim data in DB — trigger a web search pass to gather it
+      bot.sendMessage(chatId, '🔗 *Кана:* Данных от Тима нет. Запрашиваю свежие данные рынка...', { parse_mode: 'Markdown' }).catch(() => {});
+      kanaForcedSearch = true;
     }
   }
   if (agentId === 'пятница') {
@@ -1382,6 +1398,7 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
 
   // ТИМ always gets web search; ПЯТНИЦА gets it on business/strategy triggers + standard triggers; others on keyword match
   const needsSearch = agentId === 'тим'
+    || kanaForcedSearch
     || (agentId === 'пятница' && /рынок|конкурент|цена|прайс|competitor|market|pricing|invest|инвест|масштаб|scale|revenue|выручк|тренд|trend/.test(userMessage.toLowerCase()))
     || needsWebSearch(userMessage);
   const useSearch = needsSearch;
@@ -1416,13 +1433,19 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   saveMessageToDb(chatId, 'assistant', assistantMessage).catch(e => console.error('DB save error:', e.message));
   detectAndSavePrefs(chatId, userMessage).catch(e => console.error('Prefs error:', e.message));
 
-  // ТИМ: save insights after any analysis
+  // ТИМ: save insights after any analysis + notify КАНА
   if (agentId === 'тим') {
     const insightType = /конкурент|competitor|envy|sunny|regency|kitchen village/i.test(userMessage)
       ? 'competitor' : /тренд|trend/i.test(userMessage)
       ? 'trend' : /рынок|market|демограф/i.test(userMessage)
       ? 'market' : 'general';
     saveTimInsight(insightType, assistantMessage.slice(0, 2000)).catch(() => {});
+    bot.sendMessage(chatId, '📊 *Тим → Кана:* Сохранил новые данные. Используй при создании контента.', { parse_mode: 'Markdown' }).catch(() => {});
+  }
+
+  // КАНА: if search was forced (no Tim data existed), save result as tim insight for future use
+  if (agentId === 'кана' && kanaForcedSearch && assistantMessage.length > 100) {
+    saveTimInsight('market', `[auto via Кана] ${assistantMessage.slice(0, 1500)}`).catch(() => {});
   }
 
   // КАНА: save produced content to kana_content
