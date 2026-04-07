@@ -1183,6 +1183,24 @@ bot.onText(/\/clear/, async (msg) => {
 
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || '';
 
+function isPhotoSearchRequest(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return /найди\s+(фото|картинк|изображени|примеры?|снимк)|покажи\s+(фото|картинк|изображени|примеры?|снимк)|нужны?\s+(фото|картинк|изображени)|есть\s+(фото|картинк)|пришли\s+(фото|картинк)|find\s+(me\s+)?(a\s+)?(photo|picture|image|example)|show\s+(me\s+)?(a\s+)?(photo|picture|image|example)|search\s+(for\s+)?(photo|picture|image)/.test(t);
+}
+
+async function extractPhotoQuery(text) {
+  const res = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 60,
+    messages: [{
+      role: 'user',
+      content: `Extract the photo search subject from this message and return ONLY a short English search query (2-5 words, no punctuation) suitable for a stock photo site:\n\n"${text}"`,
+    }],
+  });
+  return res.content[0].text.trim().replace(/^["'`]|["'`]$/g, '');
+}
+
 async function searchUnsplashPhotos(query) {
   if (!UNSPLASH_ACCESS_KEY) throw new Error('UNSPLASH_ACCESS_KEY не настроен');
   const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=5&client_id=${UNSPLASH_ACCESS_KEY}`;
@@ -1630,6 +1648,21 @@ bot.on('message', async (msg) => {
   // ── REVIEW REQUEST without photo context ───────────────────────────────────
   if (isReviewRequest(text)) {
     bot.sendMessage(chatId, 'Пожалуйста, отправьте фото вместе с этим сообщением или прикрепите фото и напишите "проверь фото" под ним.');
+    return;
+  }
+
+  // ── PHOTO SEARCH REQUEST (natural language) ────────────────────────────────
+  if (isPhotoSearchRequest(text)) {
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const query = await extractPhotoQuery(text);
+      const photos = await searchUnsplashPhotos(query);
+      photoSearchSessions.set(chatId, { query, usedQueries: [query] });
+      await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { parse_mode: 'Markdown', disable_web_page_preview: false });
+    } catch (err) {
+      console.error('Photo search error:', err.message);
+      bot.sendMessage(chatId, `Ошибка при поиске фото: ${err.message}`);
+    }
     return;
   }
 
