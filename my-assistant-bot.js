@@ -24,6 +24,9 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 // Conversation history per chat
 const conversations = new Map();
 
+// Active agent per chat: chatId -> agentId
+const activeAgents = new Map();
+
 // Post sessions: chatId -> { text, pendingMedia, publishBoth?, interviewAnswers? }
 const postSessions = new Map();
 
@@ -688,6 +691,216 @@ Respond in the same language Ulik writes in. Russian → Russian. English → En
 
 
 // ---------------------------------------------------------------------------
+// Multi-agent system
+// ---------------------------------------------------------------------------
+
+const DEFAULT_AGENT = 'пятница';
+
+const AGENTS = {
+  кана: {
+    id: 'кана',
+    name: 'КАНА',
+    emoji: '🎯',
+    title: 'Маркетолог',
+    systemPrompt: `Ты КАНА — старший креативный директор и маркетинговый эксперт Улика. Говоришь прямо, по делу, с позиции эксперта. Никакой воды. Называешь слабый контент слабым сразу. Даёшь одну чёткую рекомендацию, не три варианта.
+
+${BRAND_KNOWLEDGE}
+
+---
+
+${LONGHORN_BRAND_KNOWLEDGE}
+
+---
+
+${MARKETING_RULES}
+
+## Как работаешь
+
+**КОНТЕКСТНОЕ МЫШЛЕНИЕ**
+Отслеживаешь весь разговор. Ссылаешься на конкретику — если упоминался проект в Arlington Heights, вспоминаешь. Не обнуляешь контекст каждое сообщение.
+
+**НЕЗАВИСИМОЕ МЫШЛЕНИЕ**
+Замечаешь вещи и говоришь о них без просьбы:
+- "Три поста PROCESS подряд — алгоритм начнёт депри­оритизировать, нужен SOCIAL PROOF"
+- "Этот caption звучит как корпоративный пресс-релиз — вот версия, которая звучит по-человечески"
+- При запросе поста → предлагаешь формат Stories в дополнение
+- При проблемной композиции фото → говоришь и объясняешь как исправить в Canva
+
+**БЕЗ ШАБЛОНОВ**
+Каждый ответ — под эту конкретную ситуацию. Конкретные детали, прямые рекомендации.
+- Никогда: "Отличный вопрос!", "Конечно!", филлеры
+- Никогда: расплывчатые советы без конкретного следующего шага
+
+**ЯЗЫК**
+Отвечаешь на том языке, на котором пишет Улик. Русский → русский. English → English.`,
+  },
+
+  пятница: {
+    id: 'пятница',
+    name: 'ПЯТНИЦА',
+    emoji: '🤖',
+    title: 'Личный ассистент',
+    systemPrompt: `Ты ПЯТНИЦА — тёплый, умный личный ассистент Улика. Ты организованная, проактивная и по-настоящему полезная.
+
+Контекст об Улике: владелец Hammer Remodeling LLC (пригороды Чикаго) и Longhorn Construction (Остин, TX). Управляет маркетингом, операциями и развитием бизнеса для обеих компаний.
+
+Помогаешь с: любыми задачами, вопросами, переводами, напоминаниями, поиском информации, документами, планированием, организацией — всем, что нужно.
+
+## Как работаешь
+
+**ЛИЧНОСТЬ**
+Тёплая, но эффективная. Не тратишь время впустую. Доводишь дела до конца и предвосхищаешь, что понадобится следующим. Говоришь как умный ассистент, который давно работает с Уликом и знает его приоритеты.
+
+**ПРОАКТИВНОСТЬ**
+После выполнения задачи добавляешь одно короткое наблюдение или предложение, о котором не спрашивали, но которое будет полезно. Максимум 1-2 предложения, конкретно.
+
+**КОНТЕКСТНОЕ МЫШЛЕНИЕ**
+Отслеживаешь весь разговор. Помнишь детали. Не обнуляешь контекст каждое сообщение.
+
+**ЯЗЫК**
+Всегда отвечаешь по-русски если Улик пишет на русском. English → English.`,
+  },
+
+  усь: {
+    id: 'усь',
+    name: 'УСЬ',
+    emoji: '🔧',
+    title: 'Тех поддержка',
+    systemPrompt: `Ты УСЬ — старший разработчик и специалист технической поддержки. Точный, технический, решаешь проблемы в корне.
+
+## Стек бота
+- Runtime: Node.js
+- Telegram: node-telegram-bot-api (polling)
+- AI: Anthropic Claude API (@anthropic-ai/sdk), claude-sonnet-4-20250514
+- Voice: OpenAI Whisper (whisper-1)
+- DB: PostgreSQL на Railway (таблицы: conversations, user_preferences, posts_history, reminders)
+- Social: Facebook/Instagram Graph API v19.0
+- Video: ffmpeg (извлечение кадров)
+- Файл бота: C:/Users/User/my-assistant-bot.js
+- Фото-поиск: Unsplash API
+
+## Как работаешь
+
+**ДИАГНОСТИКА**
+Не гадаешь — анализируешь реальную причину. Читаешь стек трейс. Проверяешь предположения.
+
+**КОНКРЕТНОСТЬ**
+Даёшь точные ответы с кодом когда нужно. Без ручного размахивания — называешь конкретный файл, строку, функцию.
+
+**ЛИЧНОСТЬ**
+Говоришь как старший разработчик, который всё видел и всё починил. Лаконично. По делу. Без лишних слов.
+
+**ЯЗЫК**
+Отвечаешь по-русски. Код и технические термины — на английском.`,
+  },
+
+  тим: {
+    id: 'тим',
+    name: 'ТИМ',
+    emoji: '📊',
+    title: 'Аналитик',
+    systemPrompt: `Ты ТИМ — бизнес-аналитик и стратег. Анализируешь конкурентов, выявляешь тренды, строишь стратегии, находишь данные.
+
+${BRAND_KNOWLEDGE}
+
+---
+
+${LONGHORN_BRAND_KNOWLEDGE}
+
+## Как работаешь
+
+**АНАЛИТИЧЕСКИЙ ПОДХОД**
+Не гадаешь — рассуждаешь от данных. Структурированный анализ с чёткими выводами. Указываешь источники и допущения.
+
+**ВЕБ-ПОИСК**
+Используешь веб-поиск когда нужны актуальные данные рынка, информация о конкурентах или тренды. Всегда ищешь перед тем как давать конкретные цифры.
+
+**СТРУКТУРА ОТВЕТОВ**
+Отчёты и анализы — в чётком формате: контекст → данные → выводы → рекомендации. Таблицы для сравнений.
+
+**ЛИЧНОСТЬ**
+Говоришь как management consultant, который зарабатывает за инсайт, а не за час работы. Аналитически, стратегически, без воды.
+
+**ЯЗЫК**
+Отвечаешь по-русски. Данные и термины могут быть на английском.`,
+  },
+};
+
+const AGENTS_MENU_TEXT = `👥 *Выбери агента:*
+
+1. 🎯 *КАНА* — Маркетолог
+   Анализ фото/видео, написание постов, контент-стратегия, публикация в Facebook/Instagram, аналитика, брендбук Hammer & Longhorn
+
+2. 🤖 *ПЯТНИЦА* — Личный ассистент
+   Любые задачи, вопросы, переводы, напоминания, поиск информации, документы, планирование
+
+3. 🔧 *УСЬ* — Тех поддержка
+   Анализ ошибок, отладка, технические вопросы, помощь с кодом, мониторинг бота
+
+4. 📊 *ТИМ* — Аналитик
+   Анализ конкурентов, тренды, стратегия, отчёты, поиск данных
+
+Переключить: /кана · /пятница · /усь · /тим`;
+
+function normalizeAgentId(raw) {
+  const n = (raw || '').toLowerCase().trim();
+  if (/^кан/.test(n)) return 'кана';
+  if (/^пятниц/.test(n)) return 'пятница';
+  if (/^ус/.test(n)) return 'усь';
+  if (/^тим/.test(n)) return 'тим';
+  return null;
+}
+
+// Returns { agentId, task } if message starts with agent name or contains switch command
+function detectAgentDirective(text) {
+  if (!text) return null;
+  const t = text.trim();
+
+  // "Кана, напиши пост..." or "ПЯТНИЦА: сделай..."
+  const prefixMatch = t.match(/^(кана|пятница|усь|тим)[,:\s]\s*([\s\S]+)/iu);
+  if (prefixMatch) {
+    const agentId = normalizeAgentId(prefixMatch[1]);
+    if (agentId) return { agentId, task: prefixMatch[2].trim() };
+  }
+
+  // "переключись на Кана" / "переключи на усь"
+  const switchMatch = t.match(/перекл[уюи]чис[ьь]?\s+на\s+(\S+)/iu);
+  if (switchMatch) {
+    const agentId = normalizeAgentId(switchMatch[1]);
+    if (agentId) return { agentId, task: null };
+  }
+
+  // "передай Кане [task]" / "передай тиму [task]"
+  const delegateMatch = t.match(/передай\s+(\S+?)\s+([\s\S]+)/iu);
+  if (delegateMatch) {
+    const agentId = normalizeAgentId(delegateMatch[1]);
+    if (agentId) return { agentId, task: delegateMatch[2].trim() };
+  }
+
+  return null;
+}
+
+async function getActiveAgent(chatId) {
+  if (activeAgents.has(chatId)) return activeAgents.get(chatId);
+  try {
+    const res = await pool.query('SELECT preferences FROM user_preferences WHERE chat_id = $1', [chatId]);
+    if (res.rows.length > 0 && res.rows[0].preferences?.activeAgent) {
+      const agentId = res.rows[0].preferences.activeAgent;
+      if (AGENTS[agentId]) {
+        activeAgents.set(chatId, agentId);
+        return agentId;
+      }
+    }
+  } catch {}
+  return DEFAULT_AGENT;
+}
+
+async function setActiveAgent(chatId, agentId) {
+  activeAgents.set(chatId, agentId);
+  await upsertUserPrefs(chatId, { activeAgent: agentId });
+}
+
+// ---------------------------------------------------------------------------
 // Claude helpers
 // ---------------------------------------------------------------------------
 
@@ -781,7 +994,10 @@ function extractText(content) {
   return content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 }
 
-async function askClaude(chatId, userMessage) {
+async function askClaude(chatId, userMessage, overrideAgentId = null) {
+  const agentId = overrideAgentId || await getActiveAgent(chatId);
+  const agent = AGENTS[agentId] || AGENTS[DEFAULT_AGENT];
+
   await ensureHistoryLoaded(chatId);
   const history = getHistory(chatId);
   history.push({ role: 'user', content: userMessage });
@@ -791,7 +1007,7 @@ async function askClaude(chatId, userMessage) {
   const baseParams = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
-    system: SYSTEM_PROMPT,
+    system: agent.systemPrompt,
   };
   if (useSearch) baseParams.tools = WEB_SEARCH_TOOL;
 
@@ -819,7 +1035,7 @@ async function askClaude(chatId, userMessage) {
   saveMessageToDb(chatId, 'assistant', assistantMessage).catch(e => console.error('DB save error:', e.message));
   detectAndSavePrefs(chatId, userMessage).catch(e => console.error('Prefs error:', e.message));
 
-  return assistantMessage;
+  return `${agent.emoji} *${agent.name}*\n\n${assistantMessage}`;
 }
 
 async function handlePostFlow(chatId, text, media = null) {
@@ -1151,14 +1367,38 @@ async function downloadTelegramFile(fileId) {
 // Bot commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const name = msg.from.first_name || 'there';
-  bot.sendMessage(
-    chatId,
-    `Hey ${name}! I'm your personal assistant and marketing expert.\n\nI work with:\n• Hammer Remodeling LLC (Chicago)\n• Longhorn Construction (Austin, TX)\n\n*What I can do:*\n• Photo + "проверь фото" → creative brief interview\n• Photo with caption → direct review & publish\n• Photo only → caption suggestions\n• Voice message → transcribe & respond\n• Video → analyze frames & brief\n• PDF/DOCX/TXT → analyze document\n• "напомни мне..." → set a reminder\n\nType /help for all commands.`,
-    { parse_mode: 'Markdown' }
-  );
+  await bot.sendMessage(chatId, AGENTS_MENU_TEXT, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/agents/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, AGENTS_MENU_TEXT, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/кана/, async (msg) => {
+  const chatId = msg.chat.id;
+  await setActiveAgent(chatId, 'кана');
+  bot.sendMessage(chatId, '🎯 *КАНА* активирован. Маркетолог на связи.', { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/пятница/, async (msg) => {
+  const chatId = msg.chat.id;
+  await setActiveAgent(chatId, 'пятница');
+  bot.sendMessage(chatId, '🤖 *ПЯТНИЦА* активирована. Личный ассистент готов.', { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/усь/, async (msg) => {
+  const chatId = msg.chat.id;
+  await setActiveAgent(chatId, 'усь');
+  bot.sendMessage(chatId, '🔧 *УСЬ* активирован. Тех поддержка на связи.', { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/тим/, async (msg) => {
+  const chatId = msg.chat.id;
+  await setActiveAgent(chatId, 'тим');
+  bot.sendMessage(chatId, '📊 *ТИМ* активирован. Аналитик готов к работе.', { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/clear/, async (msg) => {
@@ -1169,12 +1409,13 @@ bot.onText(/\/clear/, async (msg) => {
   captionSessions.delete(chatId);
   postSessions.delete(chatId);
   strategySessions.delete(chatId);
+  activeAgents.delete(chatId);
   try {
     await pool.query('DELETE FROM conversations WHERE chat_id = $1', [chatId]);
   } catch (err) {
     console.error('Failed to clear DB history:', err.message);
   }
-  bot.sendMessage(chatId, 'All sessions cleared. Fresh start!');
+  bot.sendMessage(chatId, 'Все сессии очищены. Активный агент сброшен на ПЯТНИЦА.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1486,7 @@ bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    `*Available commands:*\n\n/start — Welcome\n/clear — Clear all sessions and history\n/post [text] — Review & publish a text post\n/strategy — Build a content strategy (interview)\n/analytics — Facebook Page insights & recommendations\n/reminders — List your active reminders\n/cancelreminder [id] — Cancel a reminder by ID\n/findphoto [description] — Search free photos on Unsplash\n/help — This message\n\n*Photo flows:*\n• Photo + "проверь фото" → interview & creative brief\n• Photo + caption → direct review & publish\n• Photo only → caption suggestions\n\n*Other:*\n• Voice message → transcribe & respond\n• Video → frame analysis & creative brief\n• PDF/DOCX/TXT → document analysis\n• "напомни мне X в Y" → set a reminder\n• After /findphoto: "не подходит" или "другие" → new search`,
+    `*Команды:*\n\n/agents — Выбор агента\n/кана — Переключить на КАНА (маркетолог)\n/пятница — Переключить на ПЯТНИЦА (ассистент)\n/усь — Переключить на УСЬ (тех поддержка)\n/тим — Переключить на ТИМ (аналитик)\n\n/clear — Очистить историю и сессии\n/post [текст] — Проверить и опубликовать текстовый пост\n/strategy — Контент-стратегия (интервью)\n/analytics — Аналитика Facebook\n/reminders — Активные напоминания\n/cancelreminder [id] — Отменить напоминание\n/findphoto [описание] — Поиск фото на Unsplash\n/help — Это сообщение\n\n*Фото:*\n• Фото + "проверь фото" → интервью и бриф\n• Фото + подпись → прямая проверка\n• Фото без подписи → варианты caption\n\n*Другое:*\n• Голосовое → транскрипция и ответ\n• Видео → анализ кадров и бриф\n• PDF/DOCX/TXT → анализ документа\n• "напомни мне X в Y" → напоминание\n\n*Смена агента в чате:*\n• "Кана, напиши пост про ванную"\n• "переключись на Тим"\n• "передай Усю эту ошибку"`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -1682,6 +1923,27 @@ bot.on('message', async (msg) => {
     } catch (err) {
       console.error('Reminder save error:', err.message);
       bot.sendMessage(chatId, 'Ошибка при сохранении напоминания. Попробуй ещё раз.');
+    }
+    return;
+  }
+
+  // ── AGENT DIRECTIVE ────────────────────────────────────────────────────────
+  const directive = detectAgentDirective(text);
+  if (directive) {
+    await setActiveAgent(chatId, directive.agentId);
+    const agent = AGENTS[directive.agentId];
+    if (!directive.task) {
+      bot.sendMessage(chatId, `${agent.emoji} *${agent.name}* активирован.`, { parse_mode: 'Markdown' });
+      return;
+    }
+    // Switch and execute task immediately
+    bot.sendChatAction(chatId, 'typing');
+    try {
+      const reply = await askClaude(chatId, directive.task, directive.agentId);
+      bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Error calling Claude API:', err.message);
+      bot.sendMessage(chatId, 'Что-то пошло не так. Попробуй ещё раз.');
     }
     return;
   }
