@@ -1215,13 +1215,11 @@ async function searchUnsplashPhotos(query) {
 
 function buildPhotoMessage(photos, query) {
   if (photos.length === 0) return `Не нашёл фото по запросу "${query}". Попробуй другое описание.`;
-  let msg = `🖼 <b>Фото по запросу:</b> "${query}"\n\n`;
-  photos.forEach((p, i) => {
-    const desc = p.description.slice(0, 60).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const author = p.author.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    msg += `<b>${i + 1}.</b> <a href="${p.url}">${desc}</a>\n📷 <i>by <a href="${p.authorLink}">${author}</a></i> (Unsplash)\n\n`;
+  let msg = `Фото по запросу: ${query}\n\n`;
+  photos.forEach(p => {
+    msg += `${p.url}\n`;
   });
-  msg += `<i>Напиши "не подходит" или "другие" — найду с другими ключевыми словами.</i>`;
+  msg += `\nНапиши "не подходит" или "другие" — найду с другими ключевыми словами.`;
   return msg;
 }
 
@@ -1232,12 +1230,7 @@ bot.onText(/\/findphoto (.+)/s, async (msg, match) => {
   try {
     const photos = await searchUnsplashPhotos(query);
     photoSearchSessions.set(chatId, { query, usedQueries: [query] });
-    try {
-      await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { parse_mode: 'HTML', disable_web_page_preview: false });
-    } catch (sendErr) {
-      console.error('sendMessage HTML error:', sendErr.message);
-      await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { disable_web_page_preview: false });
-    }
+    await bot.sendMessage(chatId, buildPhotoMessage(photos, query));
   } catch (err) {
     console.error('Unsplash error:', err.message);
     bot.sendMessage(chatId, `Ошибка при поиске фото: ${err.message}`);
@@ -1473,12 +1466,7 @@ bot.on('message', async (msg) => {
         session.usedQueries.push(altQuery);
         photoSearchSessions.set(chatId, session);
         const photos = await searchUnsplashPhotos(altQuery);
-        try {
-          await bot.sendMessage(chatId, buildPhotoMessage(photos, altQuery), { parse_mode: 'HTML', disable_web_page_preview: false });
-        } catch (sendErr) {
-          console.error('sendMessage HTML error (retry):', sendErr.message);
-          await bot.sendMessage(chatId, buildPhotoMessage(photos, altQuery), { disable_web_page_preview: false });
-        }
+        await bot.sendMessage(chatId, buildPhotoMessage(photos, altQuery));
       } catch (err) {
         console.error('Unsplash retry error:', err.message);
         bot.sendMessage(chatId, `Ошибка при поиске: ${err.message}`);
@@ -1670,12 +1658,7 @@ bot.on('message', async (msg) => {
       const query = await extractPhotoQuery(text);
       const photos = await searchUnsplashPhotos(query);
       photoSearchSessions.set(chatId, { query, usedQueries: [query] });
-      try {
-        await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { parse_mode: 'HTML', disable_web_page_preview: false });
-      } catch (sendErr) {
-        console.error('sendMessage HTML error (auto):', sendErr.message);
-        await bot.sendMessage(chatId, buildPhotoMessage(photos, query), { disable_web_page_preview: false });
-      }
+      await bot.sendMessage(chatId, buildPhotoMessage(photos, query));
     } catch (err) {
       console.error('Photo search error:', err.message);
       bot.sendMessage(chatId, `Ошибка при поиске фото: ${err.message}`);
