@@ -819,19 +819,48 @@ ${LONGHORN_BRAND_KNOWLEDGE}
 
 ### 1. АНАЛИЗ КОНКУРЕНТОВ
 Конкуренты Hammer Remodeling (Чикаго): Envy Home Services, Sunny Construction, Regency Home, Kitchen Village.
-Конкуренты Longhorn Construction (Остин): ищи через веб-поиск актуальных игроков Austin TX remodeling рынка.
+Конкуренты Longhorn Construction (Остин): сначала ищи через web_search "remodeling contractors Austin TX" чтобы найти актуальных игроков.
 
-Когда просят анализ конкурента — ищи через web_search:
-- Их последние посты и активность в соцсетях
-- Отзывы (Google, Yelp, Houzz) — рейтинг, количество, динамика
-- Цены и спецпредложения
-- Что делают хорошо, что упускают
+Для КАЖДОГО анализируемого конкурента выполняй ВСЕ четыре шага по порядку:
 
-Формат ответа:
-**[Название]** — рейтинг X/5 (N отзывов)
-- Сильные стороны: [конкретно]
-- Слабые стороны: [конкретно]
-- Возможность для Hammer/Longhorn: [конкретное действие]
+**ШАГ 1 — Сайт (web_fetch)**
+Зайди на сайт конкурента через web_fetch. Ищи и фиксируй:
+- Главный оффер (что обещают, какой результат)
+- Цены или диапазоны если указаны
+- Главный CTA (кнопка/призыв)
+- Перечень услуг
+- УТП — чем отличаются от других
+
+**ШАГ 2 — Реклама (web_fetch Facebook Ads Library)**
+Открой через web_fetch:
+https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q={НАЗВАНИЕ_КОНКУРЕНТА}
+Анализируй:
+- Есть ли активные объявления (и сколько)
+- Что рекламируют: оффер, текст, визуал (по описанию)
+- Акции и спецпредложения в рекламе
+- Тон и стиль рекламных текстов
+
+**ШАГ 3 — Трафик и SEO (web_search)**
+Ищи через web_search: "[название] site:similarweb.com" или "[название] traffic estimate" или "[название] monthly visitors".
+Также ищи: "[название] reviews 2024 2025" на Google, Yelp, Houzz, BBB.
+Фиксируй: рейтинг, количество отзывов, динамика, типичные жалобы.
+
+**ШАГ 4 — Итоговая сводка**
+Оформляй каждого конкурента так:
+
+---
+**[НАЗВАНИЕ]** | Рейтинг: X/5 (N отзывов) | Трафик: ~N/мес (если найден)
+
+🌐 **Сайт:** главный оффер в одном предложении | CTA | услуги (список)
+💰 **Цены:** [что указано или "не указаны"]
+📢 **Реклама:** [активных объявлений: N] — [краткое описание что рекламируют]
+📊 **Трафик:** [данные или "данных нет"]
+⭐ **Отзывы:** [рейтинг, кол-во, ключевые темы]
+
+✅ **Сильные стороны:** [конкретно, 2-3 пункта]
+❌ **Слабые стороны:** [конкретно, 2-3 пункта]
+🎯 **Возможность для нас:** [конкретное действие с числами]
+---
 
 ### 2. РЫНОЧНЫЕ ТРЕНДЫ
 Всегда ищи актуальные данные перед ответом. Топ-3 источника для поиска: Houzz Research, NKBA reports, Remodeling Magazine Cost vs Value.
@@ -1665,8 +1694,12 @@ async function generateTimReport(chatId) {
 Обязательные разделы:
 
 **1. АКТИВНОСТЬ КОНКУРЕНТОВ (последние 7 дней)**
-Ищи: Envy Home Services Chicago, Sunny Construction Chicago, Regency Home Services, Kitchen Village Arlington Heights.
-Что постили, какие акции запустили, новые отзывы. Таблица: Конкурент | Активность | Оценка угрозы.
+Для каждого конкурента выполни полный 4-шаговый анализ из твоих инструкций:
+- web_fetch сайта: текущий оффер, CTA, цены
+- web_fetch Facebook Ads Library: активные объявления и что рекламируют
+- web_search отзывов и трафика: новые отзывы за неделю, рейтинг
+Конкуренты: Envy Home Services, Sunny Construction, Regency Home, Kitchen Village.
+Формат на каждого: мини-карточка из ШАГа 4 + оценка угрозы (🔴/🟡/🟢).
 
 **2. ТРЕНДЫ В НИШЕ**
 Ищи: home remodeling trends 2025, bathroom remodel trends, contractor marketing social media.
@@ -1699,7 +1732,7 @@ async function generateTimReport(chatId) {
 
   // Run the full tool loop
   let safetyCounter = 0;
-  while (response.stop_reason === 'tool_use' && safetyCounter++ < 8) {
+  while (response.stop_reason === 'tool_use' && safetyCounter++ < 20) {
     messages.push({ role: 'assistant', content: response.content });
     const toolResults = response.content
       .filter(b => b.type === 'tool_use')
