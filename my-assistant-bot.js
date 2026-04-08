@@ -1161,6 +1161,80 @@ function detectAgentDirective(text) {
   return null;
 }
 
+// ── Multi-agent collaboration ─────────────────────────────────────────────────
+
+function detectMultiAgentRequest(text) {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  const mentioned = [];
+  if (/кан[аеуыё]?\b/i.test(t)) mentioned.push('кана');
+  if (/пятниц[аеуы]?\b/i.test(t)) mentioned.push('пятница');
+  if (/ус[ьяю]?\b/i.test(t)) mentioned.push('усь');
+  if (/тим[уае]?\b/i.test(t)) mentioned.push('тим');
+  if (mentioned.length >= 2) return mentioned;
+  return null;
+}
+
+function getMultiAgentOrder(agents) {
+  const ORDER = ['тим', 'кана', 'усь', 'пятница'];
+  return ORDER.filter(a => agents.includes(a));
+}
+
+async function runMultiAgentPipeline(chatId, task, agents) {
+  const ordered = getMultiAgentOrder(agents);
+  const agentLabels = ordered.map(id => AGENTS[id].emoji + ' ' + AGENTS[id].name).join(', ');
+  await bot.sendMessage(chatId, `🤝 *Запускаю команду:* ${agentLabels}...`, { parse_mode: 'Markdown' });
+
+  const outputs = [];
+
+  for (const agentId of ordered) {
+    const agent = AGENTS[agentId];
+    bot.sendChatAction(chatId, 'typing');
+
+    // Show thinking message per agent
+    let thinking = null;
+    if (agentId === 'тим') thinking = getTimThinkingMessage(task);
+    else if (agentId === 'кана') thinking = getKanaThinkingMessage(task);
+    else if (agentId === 'пятница') thinking = getPyatnitsaThinkingMessage(task);
+    if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+
+    // Build context-aware task prompt — later agents get prior outputs as context
+    let agentTask = task;
+    if (outputs.length > 0) {
+      const prevContext = outputs.map(o => `[${o.agentName}]:\n${o.text}`).join('\n\n');
+      agentTask = `Предыдущие агенты уже выполнили свою часть:\n\n${prevContext}\n\n---\nТеперь выполни свою часть задачи: ${task}`;
+    }
+
+    try {
+      const reply = await askClaude(chatId, agentTask, agentId);
+      await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+      // Strip "emoji *Name*\n\n" prefix so context passed to next agent is clean text
+      const replyText = reply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
+      outputs.push({ agentId, agentName: agent.name, text: replyText });
+    } catch (err) {
+      console.error(`Multi-agent error (${agentId}):`, err.message);
+      await bot.sendMessage(chatId, `${agent.emoji} *${agent.name}:* Ошибка при выполнении задачи.`, { parse_mode: 'Markdown' });
+      outputs.push({ agentId, agentName: agent.name, text: '(ошибка)' });
+    }
+  }
+
+  // Final summary — always use the last agent in the pipeline (Пятница if present)
+  const summaryAgentId = agents.includes('пятница') ? 'пятница' : ordered[ordered.length - 1];
+  const allContext = outputs.map(o => `[${o.agentName}]:\n${o.text}`).join('\n\n');
+  bot.sendChatAction(chatId, 'typing');
+  try {
+    const summaryReply = await askClaude(
+      chatId,
+      `Подведи итог командной работы. Агенты выполнили следующее:\n\n${allContext}\n\nДай краткий итог: что сделано, что главное, каков следующий шаг.`,
+      summaryAgentId
+    );
+    const summaryText = summaryReply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
+    await bot.sendMessage(chatId, `📋 *Итог команды:*\n\n${summaryText}`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('Multi-agent summary error:', err.message);
+  }
+}
+
 async function getActiveAgent(chatId) {
   if (activeAgents.has(chatId)) return activeAgents.get(chatId);
   try {
@@ -2714,6 +2788,18 @@ bot.on('message', async (msg) => {
     } catch (err) {
       console.error('Reminder save error:', err.message);
       bot.sendMessage(chatId, 'Ошибка при сохранении напоминания. Попробуй ещё раз.');
+    }
+    return;
+  }
+
+  // ── MULTI-AGENT PIPELINE ──────────────────────────────────────────────────
+  const multiAgents = detectMultiAgentRequest(text);
+  if (multiAgents) {
+    try {
+      await runMultiAgentPipeline(chatId, text, multiAgents);
+    } catch (err) {
+      console.error('Multi-agent pipeline error:', err.message);
+      bot.sendMessage(chatId, 'Ошибка при запуске команды агентов. Попробуй ещё раз.');
     }
     return;
   }
