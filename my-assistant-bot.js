@@ -1207,7 +1207,7 @@ async function runMultiAgentPipeline(chatId, task, agents) {
 
     try {
       const reply = await askClaude(chatId, agentTask, agentId);
-      await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+      await splitAndSend(chatId, reply);
       // Strip "emoji *Name*\n\n" prefix so context passed to next agent is clean text
       const replyText = reply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
       outputs.push({ agentId, agentName: agent.name, text: replyText });
@@ -1229,7 +1229,7 @@ async function runMultiAgentPipeline(chatId, task, agents) {
       summaryAgentId
     );
     const summaryText = summaryReply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
-    await bot.sendMessage(chatId, `📋 *Итог команды:*\n\n${summaryText}`, { parse_mode: 'Markdown' });
+    await splitAndSend(chatId, `📋 *Итог команды:*\n\n${summaryText}`);
   } catch (err) {
     console.error('Multi-agent summary error:', err.message);
   }
@@ -1420,6 +1420,31 @@ function extractText(content) {
   return content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 }
 
+async function splitAndSend(chatId, text, opts = {}) {
+  const MAX = 3500;
+  const options = { parse_mode: 'Markdown', ...opts };
+  if (!text || text.length <= MAX) {
+    return bot.sendMessage(chatId, text || '', options);
+  }
+  const paragraphs = text.split(/\n\n+/);
+  const chunks = [];
+  let current = '';
+  for (const para of paragraphs) {
+    if (para.length > MAX) {
+      if (current) { chunks.push(current); current = ''; }
+      for (let i = 0; i < para.length; i += MAX) chunks.push(para.slice(i, i + MAX));
+      continue;
+    }
+    const candidate = current ? current + '\n\n' + para : para;
+    if (candidate.length > MAX) { chunks.push(current); current = para; }
+    else current = candidate;
+  }
+  if (current) chunks.push(current);
+  for (const chunk of chunks) {
+    await bot.sendMessage(chatId, chunk, options);
+  }
+}
+
 async function askClaude(chatId, userMessage, overrideAgentId = null) {
   const agentId = overrideAgentId || await getActiveAgent(chatId);
   const agent = AGENTS[agentId] || AGENTS[DEFAULT_AGENT];
@@ -1538,7 +1563,7 @@ async function handlePostFlow(chatId, text, media = null) {
       ? await reviewPostWithPhoto(text, media.imageBase64)
       : await reviewPost(text);
     postSessions.set(chatId, { text, pendingMedia: media });
-    await bot.sendMessage(chatId, review, { parse_mode: 'Markdown' });
+    await splitAndSend(chatId, review);
   } catch (err) {
     console.error('Error reviewing post:', err.message);
     bot.sendMessage(chatId, 'Something went wrong while reviewing the post. Please try again.');
@@ -2168,10 +2193,7 @@ async function pyatnitsaCommand(chatId, taskPrompt, commandType) {
   if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
   try {
     const reply = await askClaude(chatId, taskPrompt, 'пятница');
-    const CHUNK = 4000;
-    for (let i = 0; i < reply.length; i += CHUNK) {
-      await bot.sendMessage(chatId, reply.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
-    }
+    await splitAndSend(chatId, reply);
   } catch (err) {
     console.error(`/${commandType} error:`, err.message);
     bot.sendMessage(chatId, `🤖 *ПЯТНИЦА:* Не удалось выполнить задачу. Попробуй ещё раз.`, { parse_mode: 'Markdown' });
@@ -2264,10 +2286,7 @@ bot.onText(/\/report/, async (msg) => {
     saveTimInsight('weekly_report', report.slice(0, 2000)).catch(() => {});
     const header = `📊 *ТИМ — Еженедельный отчёт*\n_${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}_\n\n`;
     const full = header + report;
-    const CHUNK = 4000;
-    for (let i = 0; i < full.length; i += CHUNK) {
-      await bot.sendMessage(chatId, full.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
-    }
+    await splitAndSend(chatId, full);
   } catch (err) {
     console.error('/report error:', err.message);
     bot.sendMessage(chatId, '📊 *ТИМ:* Не удалось собрать отчёт. Попробуй ещё раз или проверь /status.', { parse_mode: 'Markdown' });
@@ -2286,7 +2305,7 @@ async function kanaCommand(chatId, taskPrompt, commandType) {
   try {
     const reply = await askClaude(chatId, taskPrompt, 'кана');
     // saveKanaContent already called inside askClaude
-    bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+    await splitAndSend(chatId, reply);
   } catch (err) {
     console.error(`/${commandType} error:`, err.message);
     bot.sendMessage(chatId, `🎯 *КАНА:* Не удалось создать ${commandType}. Попробуй ещё раз.`, { parse_mode: 'Markdown' });
@@ -2369,10 +2388,7 @@ bot.onText(/\/analytics/, async (msg) => {
       return;
     }
     const report = await generateAnalyticsReport(followers, posts);
-    const CHUNK = 4000;
-    for (let i = 0; i < report.length; i += CHUNK) {
-      await bot.sendMessage(chatId, report.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
-    }
+    await splitAndSend(chatId, report);
   } catch (err) {
     console.error('Analytics error:', err.response?.data || err.message);
     const detail = err.response?.data?.error?.message || err.message;
@@ -2452,7 +2468,7 @@ bot.on('message', async (msg) => {
         const suggestionResponse = await analyzePhotoAndSuggestCaptions(imageBase64);
         const caption = extractCaption(suggestionResponse);
         captionSessions.set(chatId, { caption, pendingMedia: { type: 'photo', fileId, imageBase64 } });
-        await bot.sendMessage(chatId, suggestionResponse, { parse_mode: 'Markdown' });
+        await splitAndSend(chatId, suggestionResponse);
       } catch (err) {
         console.error('Error suggesting captions:', err.message);
         bot.sendMessage(chatId, 'Something went wrong while analyzing the photo. Please try again.');
@@ -2471,7 +2487,7 @@ bot.on('message', async (msg) => {
       await bot.sendMessage(chatId, `🎤 _"${transcribed}"_`, { parse_mode: 'Markdown' });
       // Process as regular message
       const reply = await askClaude(chatId, transcribed);
-      bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+      await splitAndSend(chatId, reply);
     } catch (err) {
       console.error('Voice error:', err.message);
       monitorError('voiceHandler', err, chatId);
@@ -2499,10 +2515,7 @@ bot.on('message', async (msg) => {
     try {
       const docBuffer = await downloadTelegramFile(doc.file_id);
       const analysis = await analyzeDocument(docBuffer, mime, fname, msg.caption || '');
-      const CHUNK = 4000;
-      for (let i = 0; i < analysis.length; i += CHUNK) {
-        await bot.sendMessage(chatId, analysis.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
-      }
+      await splitAndSend(chatId, analysis);
     } catch (err) {
       console.error('Document analysis error:', err.message);
       bot.sendMessage(chatId, `Ошибка при анализе документа: ${err.message}`);
@@ -2532,7 +2545,7 @@ bot.on('message', async (msg) => {
       const brief = await analyzeVideoContent(frames, caption);
       // Store for potential publish
       postSessions.set(chatId, { text: '', pendingMedia: { type: 'video', fileId: videoFileId }, publishBoth: false });
-      await bot.sendMessage(chatId, brief, { parse_mode: 'Markdown' });
+      await splitAndSend(chatId, brief);
       // If review request, also start interview
       if (isReviewRequest(caption)) {
         interviewSessions.set(chatId, { step: 1, answers: [], pendingMedia: { type: 'video', fileId: videoFileId, imageBase64: frames[0] } });
@@ -2595,10 +2608,7 @@ bot.on('message', async (msg) => {
       try {
         const strategy = await generateContentStrategy(session.answers);
         // Strategy can be long -- split into chunks if needed to avoid Telegram 4096-char limit
-        const CHUNK = 4000;
-        for (let i = 0; i < strategy.length; i += CHUNK) {
-          await bot.sendMessage(chatId, strategy.slice(i, i + CHUNK), { parse_mode: 'Markdown' });
-        }
+        await splitAndSend(chatId, strategy);
       } catch (err) {
         console.error('Error generating strategy:', err.message);
         bot.sendMessage(chatId, 'Something went wrong generating the strategy. Please try again.');
@@ -2827,7 +2837,7 @@ bot.on('message', async (msg) => {
     }
     try {
       const reply = await askClaude(chatId, directive.task, directive.agentId);
-      bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+      await splitAndSend(chatId, reply);
     } catch (err) {
       console.error('Error calling Claude API:', err.message);
       bot.sendMessage(chatId, 'Что-то пошло не так. Попробуй ещё раз.');
@@ -2851,7 +2861,7 @@ bot.on('message', async (msg) => {
   try {
     const reply = await askClaude(chatId, text);
     errorCounts.delete('askClaude'); // reset on success
-    bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+    await splitAndSend(chatId, reply);
   } catch (err) {
     console.error('Error calling Claude API:', err.message);
     monitorError('askClaude', err, chatId);
