@@ -1185,53 +1185,59 @@ async function runMultiAgentPipeline(chatId, task, agents) {
   const agentLabels = ordered.map(id => AGENTS[id].emoji + ' ' + AGENTS[id].name).join(', ');
   await bot.sendMessage(chatId, `🤝 *Запускаю команду:* ${agentLabels}...`, { parse_mode: 'Markdown' });
 
-  const outputs = [];
-
   for (const agentId of ordered) {
     const agent = AGENTS[agentId];
     bot.sendChatAction(chatId, 'typing');
 
-    // Show thinking message per agent
-    let thinking = null;
-    if (agentId === 'тим') thinking = getTimThinkingMessage(task);
-    else if (agentId === 'кана') thinking = getKanaThinkingMessage(task);
-    else if (agentId === 'пятница') thinking = getPyatnitsaThinkingMessage(task);
-    if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+    if (agentId === 'тим') {
+      // Run full analysis — askClaude saves it to tim_insights silently
+      const thinking = getTimThinkingMessage(task);
+      if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+      try {
+        const fullReply = await askClaude(chatId, task, 'тим');
+        // Compress full reply to ≤300 words bullet-point summary for user
+        const summaryRes = await anthropic.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 600,
+          messages: [{
+            role: 'user',
+            content: `Сожми следующий анализ до максимум 300 слов на русском языке. Только тезисы (bullet points), без вступления и заключения:\n\n${fullReply}`,
+          }],
+        });
+        const shortSummary = extractText(summaryRes.content);
+        await bot.sendMessage(chatId, `📊 *ТИМ:*\n\n${shortSummary}`, { parse_mode: 'Markdown' });
+      } catch (err) {
+        console.error('Multi-agent Tim error:', err.message);
+        await bot.sendMessage(chatId, `📊 *ТИМ:* Ошибка при анализе.`, { parse_mode: 'Markdown' });
+      }
 
-    // Build context-aware task prompt — later agents get prior outputs as context
-    let agentTask = task;
-    if (outputs.length > 0) {
-      const prevContext = outputs.map(o => `[${o.agentName}]:\n${o.text}`).join('\n\n');
-      agentTask = `Предыдущие агенты уже выполнили свою часть:\n\n${prevContext}\n\n---\nТеперь выполни свою часть задачи: ${task}`;
+    } else if (agentId === 'кана') {
+      // Load Tim's latest insights silently, confirm readiness — do NOT generate content plan
+      try {
+        const recentInsights = await getRecentTimInsights(3);
+        if (recentInsights.length > 0) {
+          await bot.sendMessage(chatId, `🎯 *Кана:* Данные от Тима получил, готов к работе.`, { parse_mode: 'Markdown' });
+        } else {
+          await bot.sendMessage(chatId, `🎯 *Кана:* Данных от Тима нет, готов к работе.`, { parse_mode: 'Markdown' });
+        }
+      } catch (err) {
+        console.error('Multi-agent Kana error:', err.message);
+        await bot.sendMessage(chatId, `🎯 *Кана:* Готов к работе.`, { parse_mode: 'Markdown' });
+      }
+
+    } else {
+      // Усь / Пятница: run normally, enforce 300-word limit
+      const thinking = agentId === 'пятница' ? getPyatnitsaThinkingMessage(task) : null;
+      if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
+      const limitedTask = `${task}\n\nОтветь кратко: максимум 300 слов, тезисами (bullet points).`;
+      try {
+        const reply = await askClaude(chatId, limitedTask, agentId);
+        await splitAndSend(chatId, reply);
+      } catch (err) {
+        console.error(`Multi-agent error (${agentId}):`, err.message);
+        await bot.sendMessage(chatId, `${agent.emoji} *${agent.name}:* Ошибка при выполнении задачи.`, { parse_mode: 'Markdown' });
+      }
     }
-
-    try {
-      const reply = await askClaude(chatId, agentTask, agentId);
-      await splitAndSend(chatId, reply);
-      // Strip "emoji *Name*\n\n" prefix so context passed to next agent is clean text
-      const replyText = reply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
-      outputs.push({ agentId, agentName: agent.name, text: replyText });
-    } catch (err) {
-      console.error(`Multi-agent error (${agentId}):`, err.message);
-      await bot.sendMessage(chatId, `${agent.emoji} *${agent.name}:* Ошибка при выполнении задачи.`, { parse_mode: 'Markdown' });
-      outputs.push({ agentId, agentName: agent.name, text: '(ошибка)' });
-    }
-  }
-
-  // Final summary — always use the last agent in the pipeline (Пятница if present)
-  const summaryAgentId = agents.includes('пятница') ? 'пятница' : ordered[ordered.length - 1];
-  const allContext = outputs.map(o => `[${o.agentName}]:\n${o.text}`).join('\n\n');
-  bot.sendChatAction(chatId, 'typing');
-  try {
-    const summaryReply = await askClaude(
-      chatId,
-      `Подведи итог командной работы. Агенты выполнили следующее:\n\n${allContext}\n\nДай краткий итог: что сделано, что главное, каков следующий шаг.`,
-      summaryAgentId
-    );
-    const summaryText = summaryReply.replace(/^.+?\*[^\n]+\*\n\n/s, '');
-    await splitAndSend(chatId, `📋 *Итог команды:*\n\n${summaryText}`);
-  } catch (err) {
-    console.error('Multi-agent summary error:', err.message);
   }
 }
 
@@ -1539,7 +1545,6 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
       ? 'trend' : /рынок|market|демограф/i.test(userMessage)
       ? 'market' : 'general';
     saveTimInsight(insightType, assistantMessage.slice(0, 2000)).catch(() => {});
-    bot.sendMessage(chatId, '📊 *Тим → Кана:* Сохранил новые данные. Используй при создании контента.', { parse_mode: 'Markdown' }).catch(() => {});
   }
 
   // КАНА: if search was forced (no Tim data existed), save result as tim insight for future use
