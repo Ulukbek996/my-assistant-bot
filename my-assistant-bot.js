@@ -129,7 +129,7 @@ async function initDb() {
 
 async function loadConversationFromDb(chatId) {
   const res = await pool.query(
-    'SELECT role, content FROM conversations WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 20',
+    'SELECT role, content FROM conversations WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 10',
     [chatId]
   );
   return res.rows.reverse();
@@ -370,6 +370,10 @@ RULE 4 - FUNNEL: TOP (warm-up: show transformation, build trust) or BOTTOM (read
 RULE 5 - CTA DEPTH: Small (like/comment) | Medium (DM/form on platform) | Large (call/website). Match to funnel stage.
 RULE 6 - CONTACT INFO: ONE contact method per post only.
 RULE 7 - PLATFORM: Facebook = text first, image supports. Instagram = image first, text adds detail.`;
+
+const SHORT_BRAND_HAMMER = `Hammer Remodeling LLC — Buffalo Grove, IL. Slogan: "European craftsmanship. American standards. Done in days, not months." Pillars: QUALITY (European craftsmen), SPEED (bathroom 10-14 working days), TRANSPARENCY (fixed price, no surprises). Target: NW Chicago suburbs homeowners ($150k-$300k income). Competitors: Envy Home Services, Sunny Construction, Regency Home, Kitchen Village.`;
+
+const SHORT_BRAND_LONGHORN = `Longhorn Construction — Austin, TX (Round Rock, Cedar Park, Georgetown, Kyle, Buda, Leander). Pillars: QUALITY, SPEED (on schedule), TRANSPARENCY (clear pricing upfront). Target: Austin suburbs homeowners ($100k-$250k income).`;
 
 const IMAGE_EDITING_SECTION = `**🖼️ Креатив (Canva/Photoshop инструкции):**
 - **Логотип:** позиция + размер + цвет + opacity (пр: "нижний правый, 12% ширины, белый, 70%")
@@ -767,43 +771,8 @@ ${CLARIFYING_QUESTIONS_RULE}
 // General conversation system prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are Ulik's senior marketing partner and personal assistant. Ulik owns Hammer Remodeling LLC (Chicago suburbs) and Longhorn Construction (Austin, TX). You know both businesses inside out.
-
-${BRAND_KNOWLEDGE}
-
----
-
-${LONGHORN_BRAND_KNOWLEDGE}
-
----
-
-${MARKETING_RULES}
-
-## How you operate
-
-**CONTEXT AWARENESS**
-You actively track the entire conversation. Reference specifics from earlier — if a project in Arlington Heights was mentioned, bring it up. If Ulik said he prefers shorter posts, remember that. Build on what was already said instead of treating each message as a blank slate.
-
-**INDEPENDENT THINKING**
-You notice things and say them without being asked. Examples of what you proactively bring up:
-- "You've been posting mostly PROCESS content — you're missing SOCIAL PROOF which is what actually converts"
-- "Third kitchen post this week — mix in an EDUCATIONAL piece before the algorithm starts deprioritizing you"
-- "This caption reads too corporate — here's a version that sounds more like a real person built this"
-- When asked for a post → also suggest what Story format would complement it
-- When a photo has a composition issue → say so and how to fix it in Canva
-
-**NO TEMPLATES, NO GENERIC PHRASES**
-Every response is written specifically for this situation. You reference concrete details from the conversation. You are direct, opinionated, and honest — like a senior partner who has skin in the game, not a consultant covering their ass.
-- Never: "Great question!", "Absolutely!", "Of course!", filler affirmations
-- Never: vague advice without a specific next action
-- Never: repeat the user's question back to them
-
-**PROACTIVE INSIGHT**
-After completing any task, add one short insight or suggestion the user didn't ask for but would find valuable. Max 1-2 sentences. Make it specific — not "consider using hashtags" but "swap #homeimprovement for #buffalogroveil on this one — more local reach for that price point."
-
-**LANGUAGE**
-Respond in the same language Ulik writes in. Russian → Russian. English → English. Mixed → match the dominant language.
-`;
+// SYSTEM_PROMPT kept for legacy compatibility — agent-specific prompts are used in practice
+const SYSTEM_PROMPT = `You are Ulik's senior marketing partner. Ulik owns Hammer Remodeling LLC (Chicago suburbs) and Longhorn Construction (Austin, TX). Be direct, specific, and actionable. No filler phrases.`;
 
 
 // ---------------------------------------------------------------------------
@@ -1003,13 +972,10 @@ Seasonal: "Spring remodel season starts now. [Offer] for bookings before [date].
     title: 'Аналитик',
     systemPrompt: `Ты ТИМ — старший бизнес-аналитик. Работаешь с данными, конкурентами, трендами и рынком. Каждое утверждение подкреплено цифрами или источником. Никогда не даёшь расплывчатых советов.
 
-${BRAND_KNOWLEDGE}
+## Бизнесы клиента
+${SHORT_BRAND_HAMMER}
 
----
-
-${LONGHORN_BRAND_KNOWLEDGE}
-
----
+${SHORT_BRAND_LONGHORN}
 
 ## Твои специализации
 
@@ -1409,7 +1375,7 @@ function getHistory(chatId) {
   return conversations.get(chatId);
 }
 
-function trimHistory(history, maxMessages = 20) {
+function trimHistory(history, maxMessages = 10) {
   if (history.length > maxMessages) history.splice(0, history.length - maxMessages);
 }
 
@@ -1458,7 +1424,10 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   await ensureHistoryLoaded(chatId);
   const history = getHistory(chatId);
   history.push({ role: 'user', content: userMessage });
-  trimHistory(history);
+  // Simple greeting/question → 5 messages; complex task → 10
+  const isSimpleMessage = userMessage.length < 80 &&
+    !/анализ|отчёт|report|конкурент|контент|пост|кампани|стратег|calendar|воронк|funnel|offer|оффер/.test(userMessage.toLowerCase());
+  trimHistory(history, isSimpleMessage ? 5 : 10);
 
   // Inject cross-agent context into system prompt
   let systemPrompt = agent.systemPrompt;
@@ -1466,20 +1435,19 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   if (agentId === 'кана') {
     const isContentRequest = /пост|campaign|кампани|funnel|фанел|offer|оффер|calendar|календар|контент|caption|подпись|реклам|ad |ads|hashtag|хэштег|текст для|напиши|создай|придумай/.test(userMessage.toLowerCase());
     const needsMarketData = /конкурент|competitor|рынок|market|тренд|trend|аудитор|audience|цен|price/.test(userMessage.toLowerCase());
-    // Always pull fresh 7-day insights for context injection
-    const recentInsights = await getRecentTimInsights(5, null, 7);
-    if (recentInsights.length > 0) {
-      const insightBlock = recentInsights
-        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 400)}`)
-        .join('\n\n');
-      systemPrompt += `\n\n---\n## Последние данные от Тима (последние 7 дней)\n${insightBlock}`;
-      if (isContentRequest) {
-        bot.sendMessage(chatId, '🔗 *Кана:* Использую последние данные от Тима для создания контента...', { parse_mode: 'Markdown' }).catch(() => {});
+    // Only inject Tim insights for actual content creation — not greetings/simple questions
+    if (isContentRequest) {
+      const recentInsights = await getRecentTimInsights(5, null, 7);
+      if (recentInsights.length > 0) {
+        const insightBlock = recentInsights
+          .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 400)}`)
+          .join('\n\n');
+        systemPrompt += `\n\n---\n## Последние данные от Тима (последние 7 дней)\n${insightBlock}`;
+      } else if (needsMarketData) {
+        // No Tim data in DB — trigger a web search pass to gather it
+        bot.sendMessage(chatId, '🔗 *Кана:* Данных от Тима нет. Запрашиваю свежие данные рынка...', { parse_mode: 'Markdown' }).catch(() => {});
+        kanaForcedSearch = true;
       }
-    } else if (isContentRequest && needsMarketData) {
-      // No Tim data in DB — trigger a web search pass to gather it
-      bot.sendMessage(chatId, '🔗 *Кана:* Данных от Тима нет. Запрашиваю свежие данные рынка...', { parse_mode: 'Markdown' }).catch(() => {});
-      kanaForcedSearch = true;
     }
   }
   if (agentId === 'пятница') {
@@ -1754,7 +1722,8 @@ async function analyzeDocument(docBuffer, mimeType, filename, userQuestion) {
 
   const systemPrompt = `You are Ulik's senior marketing partner and analyst.
 
-${BRAND_KNOWLEDGE}
+${SHORT_BRAND_HAMMER}
+${SHORT_BRAND_LONGHORN}
 
 Analyze the document provided and give actionable insights for a remodeling business owner.
 - Contracts: check terms, payment schedule, scope, red flags
@@ -3030,11 +2999,10 @@ function monitorError(key, err, chatId) {
 async function startup() {
   await initDb();
   console.log('Bot is running...');
-  // Delay health check to give Railway time to settle after cold start
-  setTimeout(checkAnthropicHealth, 8000);
+  // Anthropic health check runs on demand (/status) — not on startup
 }
 
 startup().catch(err => console.error('Startup failed:', err.message));
 setInterval(checkAndSendReminders, 60 * 1000);
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000);        // every hour
-setInterval(checkAnthropicHealth, 6 * 60 * 60 * 1000);      // every 6 hours
+// Anthropic health check removed — УСЬ checks on demand via /status
