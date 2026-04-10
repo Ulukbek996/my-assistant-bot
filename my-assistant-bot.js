@@ -375,6 +375,29 @@ const SHORT_BRAND_HAMMER = `Hammer Remodeling LLC — Buffalo Grove, IL. Slogan:
 
 const SHORT_BRAND_LONGHORN = `Longhorn Construction — Austin, TX (Round Rock, Cedar Park, Georgetown, Kyle, Buda, Leander). Pillars: QUALITY, SPEED (on schedule), TRANSPARENCY (clear pricing upfront). Target: Austin suburbs homeowners ($100k-$250k income).`;
 
+// КАНА targeted brand sections — injected based on task type
+const KANA_BRAND_FOR_POST = `## Brand Rules for Content Writing
+
+**Hammer tone — USE:** "Your bathroom, done right in 10-14 days." | "European craftsmanship. Now building in Chicago." | "No hidden fees. You see the full price before we start." | "See what we did in Arlington Heights."
+**Hammer tone — NEVER:** "World-class", "exceed expectations", "best in class", generic AI phrases. No specific European countries/cities — always "European craftsmanship" / "trained across Europe".
+**Longhorn tone:** Professional, direct, Texas-proud. Same NEVER rules.
+
+**Hammer hashtags:** Always: #hammerremodeling #bathroomremodel #chicagocontractor #homeimprovement #remodeling | Local (rotate): #buffalogroveil #arlingtonheights #chicagosuburbs #nwsuburbs #palatineil #schaumburg #northbrook | By work: #bathroomdesign #tileinstallation #bathroomrenovation #kitchenremodel #beforeandafter
+**Longhorn hashtags:** Always: #longhornremodeling #austincontractor #austintx #austinhomes #texasremodeling | Local: #roundrocktx #cedarparktx #georgetowntx #kyletx | By work: #bathroomremodel #kitchenremodel #tileinstallation #beforeandafter
+
+**Content rules:** Bathroom = 10-14 working days (always). Kitchen = "completed on schedule" (NO day count). Europe = never name countries/cities.
+**Content types:** BEFORE/AFTER | PROCESS | EDUCATIONAL | SOCIAL PROOF | OFFER
+**CTA:** Small (like/comment) | Medium (DM/form) | Large (call/website) — match to funnel stage. ONE contact method per post.`;
+
+const KANA_BRAND_FOR_PHOTO = `## Brand Pillars & Photo Rules
+
+**Hammer pillars (≥1 per post):** QUALITY (European craftsmen, precision) | SPEED (bathroom 10-14 working days) | TRANSPARENCY (fixed price, no surprises)
+**Hammer client fears:** 1) Contractor ghosts → "We show up every day" 2) Price doubles → "Full price before we start" 3) Takes months → "Done in 10-14 days" 4) Bad quality → "European standards in every project"
+**Longhorn pillars:** QUALITY | SPEED (on schedule) | TRANSPARENCY (clear pricing)
+**Longhorn fears:** 1) Won't show up 2) Price balloons 3) Drags on 4) Poor quality
+
+**Photo rule:** Any real remodeling/construction photo is valid. Only flag if completely unrelated (food, landscape, people unrelated to work).`;
+
 const IMAGE_EDITING_SECTION = `**🖼️ Креатив (Canva/Photoshop инструкции):**
 - **Логотип:** позиция + размер + цвет + opacity (пр: "нижний правый, 12% ширины, белый, 70%")
 - **Текст на фото:** точный текст + позиция + стиль (пр: "'Done in 10 Days' -- нижняя треть, белый bold 48pt, подложка #000 50%")
@@ -658,8 +681,6 @@ const POST_REVIEW_PROMPT = `You are a senior marketing expert for Hammer Remodel
 
 ${BRAND_KNOWLEDGE}
 
-${MARKETING_RULES}
-
 Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must always be in English.
 
 **Анализ текста:**
@@ -684,8 +705,6 @@ Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must a
 const POST_REVIEW_WITH_PHOTO_PROMPT = `You are a senior marketing expert for Hammer Remodeling LLC. Photo + caption review. Busy creative director style: short, direct, punchy. One sentence per point. No fluff.
 
 ${BRAND_KNOWLEDGE}
-
-${MARKETING_RULES}
 
 Respond ENTIRELY in Russian -- EXCEPT the "Suggested post:" section which must be in English.
 
@@ -730,15 +749,13 @@ ${CLARIFYING_QUESTIONS_RULE}
 
 const POST_APPLY_CORRECTION_PROMPT = `You are a social media copywriter for Hammer Remodeling LLC.
 
-${BRAND_KNOWLEDGE}
+${SHORT_BRAND_HAMMER}
 
 The user has a Facebook post draft and wants to apply corrections to it. Given the original post and the user's correction instructions, produce only the updated post text in English -- nothing else, no explanations, no labels. The updated post must still follow brand rules: no vague phrases, at least one brand pillar, specific suburb if relevant, correct hashtag sets.`;
 
 const PHOTO_CAPTION_SUGGEST_PROMPT = `You are a senior marketing expert for Hammer Remodeling LLC. Photo without caption -- analyze and write the single best caption. Busy creative director style: short, direct, punchy. One sentence per point.
 
 ${BRAND_KNOWLEDGE}
-
-${MARKETING_RULES}
 
 Respond ENTIRELY in Russian -- EXCEPT the caption itself which must be in English.
 
@@ -788,18 +805,6 @@ const AGENTS = {
     emoji: '🎯',
     title: 'Маркетолог',
     systemPrompt: `Ты КАНА — маркетинговый эксперт мирового уровня. Думаешь как Alex Hormozi ($100M Offers), Gary Vee и David Ogilvy одновременно. Одержим одной метрикой: сгенерированные лиды.
-
-${BRAND_KNOWLEDGE}
-
----
-
-${LONGHORN_BRAND_KNOWLEDGE}
-
----
-
-${MARKETING_RULES}
-
----
 
 ## МАРКЕТИНГОВЫЙ ФРЕЙМВОРК КАНЫ
 
@@ -897,13 +902,6 @@ Seasonal: "Spring remodel season starts now. [Offer] for bookings before [date].
 **Психология**
 Понимаешь когда Улик принимает эмоциональное решение вместо рационального. Называешь это прямо. Помогаешь с коммуникацией с командой, клиентами, партнёрами.
 
-## ДАННЫЕ ОТ АГЕНТОВ
-В начале разговора тебе передаются последние данные от Тима и Каны (аналитика и созданный контент).
-Используй эти данные чтобы:
-- Замечать паттерны которые сам Улик не видит
-- Предлагать связи между данными агентов ("Тим нашёл X, Кана не использовал — хочешь я скажу Кане атаковать эту нишу?")
-- Оценивать согласованность маркетинга и стратегии
-
 ## ПРОАКТИВНЫЕ СИГНАЛЫ (только когда реально ценно)
 - 💡 *Пятница:* Заметил кое-что... — когда видишь возможность
 - ⚠️ *Пятница:* Стоит обдумать... — когда видишь риск
@@ -936,33 +934,11 @@ Seasonal: "Spring remodel season starts now. [Offer] for bookings before [date].
     name: 'УСЬ',
     emoji: '🔧',
     title: 'Тех поддержка',
-    systemPrompt: `Ты УСЬ — дружелюбный айтишник, который следит за ботом и объясняет технические вещи простым языком. Никакого жаргона — только понятные объяснения и чёткие инструкции.
+    systemPrompt: `Ты УСЬ — технический мониторинг бота. Объясняешь проблемы простым языком, как друг-айтишник.
 
-## Что ты знаешь о боте
-- Бот работает на Node.js, задеплоен на Railway
-- База данных: PostgreSQL на Railway (таблицы: conversations, user_preferences, posts_history, reminders)
-- ИИ: Anthropic Claude API (claude-sonnet-4-20250514)
-- Голос: OpenAI Whisper (расшифровка голосовых)
-- Соцсети: Facebook и Instagram Graph API v19.0
-- Видео: ffmpeg (извлекает кадры для анализа)
-- Поиск фото: Unsplash API
-- Файл бота: C:/Users/User/my-assistant-bot.js
+Стек: Node.js на Railway | PostgreSQL (conversations, user_preferences, posts_history, reminders) | Claude API | OpenAI Whisper | Facebook/Instagram Graph API | ffmpeg | Unsplash API | Файл: C:/Users/User/my-assistant-bot.js
 
-## Как ты объясняешь проблемы
-
-Когда пользователь описывает проблему или присылает ошибку:
-1. Первые 1-2 предложения — что случилось, простым языком (используй аналогии: "бот уснул и нужен перезапуск", "токен как пропуск — он просрочился")
-2. Нумерованные шаги — как исправить, конкретно и по порядку
-3. Финал: "Если не помогло — скажи, разберёмся"
-
-## Твоя личность
-- Объясняешь как друг-айтишник, не как программист на собеседовании
-- Используешь аналогии из обычной жизни для технических вещей
-- Никогда не говоришь "ошибка 500" без объяснения что это значит
-- Короткие ответы — максимум 5-7 предложений если нет чётких шагов
-
-## Язык
-Отвечаешь по-русски. Технические термины объясняешь в скобках если используешь.`,
+При ошибке: 1-2 предложения что случилось (аналогия) → нумерованные шаги → "Если не помогло — скажи". Максимум 5-7 предложений. Технические термины объясняешь в скобках. Отвечаешь по-русски.`,
   },
 
   тим: {
@@ -1151,26 +1127,25 @@ async function runMultiAgentPipeline(chatId, task, agents) {
   const agentLabels = ordered.map(id => AGENTS[id].emoji + ' ' + AGENTS[id].name).join(', ');
   await bot.sendMessage(chatId, `🤝 *Запускаю команду:* ${agentLabels}...`, { parse_mode: 'Markdown' });
 
+  let pipelineTimSummary = null; // Tim summary passed to Кана in the same pipeline run
+
   for (const agentId of ordered) {
     const agent = AGENTS[agentId];
     bot.sendChatAction(chatId, 'typing');
 
     if (agentId === 'тим') {
-      // Run full analysis — askClaude saves it to tim_insights silently
       const thinking = getTimThinkingMessage(task);
       if (thinking) await bot.sendMessage(chatId, thinking, { parse_mode: 'Markdown' });
       try {
         const fullReply = await askClaude(chatId, task, 'тим');
-        // Compress full reply to ≤300 words bullet-point summary for user
+        // Compress to ≤300 words for user display
         const summaryRes = await anthropic.messages.create({
           model: CLAUDE_MODEL,
           max_tokens: 600,
-          messages: [{
-            role: 'user',
-            content: `Сожми следующий анализ до максимум 300 слов на русском языке. Только тезисы (bullet points), без вступления и заключения:\n\n${fullReply}`,
-          }],
+          messages: [{ role: 'user', content: `Сожми анализ до максимум 300 слов на русском, только тезисы (bullet points):\n\n${fullReply}` }],
         });
         const shortSummary = extractText(summaryRes.content);
+        pipelineTimSummary = shortSummary.slice(0, 600); // ~100 words for Кана
         await bot.sendMessage(chatId, `📊 *ТИМ:*\n\n${shortSummary}`, { parse_mode: 'Markdown' });
       } catch (err) {
         console.error('Multi-agent Tim error:', err.message);
@@ -1178,10 +1153,11 @@ async function runMultiAgentPipeline(chatId, task, agents) {
       }
 
     } else if (agentId === 'кана') {
-      // Load Tim's latest insights silently, confirm readiness — do NOT generate content plan
+      // Confirm readiness with Tim summary if available (100-word max, from pipeline or DB)
       try {
-        const recentInsights = await getRecentTimInsights(3);
-        if (recentInsights.length > 0) {
+        const summary = pipelineTimSummary
+          || await getRecentTimInsights(1).then(r => r[0]?.content.slice(0, 600) || null).catch(() => null);
+        if (summary) {
           await bot.sendMessage(chatId, `🎯 *Кана:* Данные от Тима получил, готов к работе.`, { parse_mode: 'Markdown' });
         } else {
           await bot.sendMessage(chatId, `🎯 *Кана:* Данных от Тима нет, готов к работе.`, { parse_mode: 'Markdown' });
@@ -1425,26 +1401,38 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   const history = getHistory(chatId);
   history.push({ role: 'user', content: userMessage });
   // Simple greeting/question → 5 messages; complex task → 10
-  const isSimpleMessage = userMessage.length < 80 &&
+  const wordCount = userMessage.trim().split(/\s+/).length;
+  const isSimpleMessage = wordCount < 20 &&
     !/анализ|отчёт|report|конкурент|контент|пост|кампани|стратег|calendar|воронк|funnel|offer|оффер/.test(userMessage.toLowerCase());
-  trimHistory(history, isSimpleMessage ? 5 : 10);
+  trimHistory(history, isSimpleMessage ? 3 : 10);
 
   // Inject cross-agent context into system prompt
   let systemPrompt = agent.systemPrompt;
   let kanaForcedSearch = false;
   if (agentId === 'кана') {
     const isContentRequest = /пост|campaign|кампани|funnel|фанел|offer|оффер|calendar|календар|контент|caption|подпись|реклам|ad |ads|hashtag|хэштег|текст для|напиши|создай|придумай/.test(userMessage.toLowerCase());
+    const isCampaign = /кампани|campaign|funnel|фанел|calendar|стратег|воронк/.test(userMessage.toLowerCase());
+    const isPhotoTask = /фото|photo|image|снимок|картинк|caption|подпись/.test(userMessage.toLowerCase());
     const needsMarketData = /конкурент|competitor|рынок|market|тренд|trend|аудитор|audience|цен|price/.test(userMessage.toLowerCase());
-    // Only inject Tim insights for actual content creation — not greetings/simple questions
+
+    // Inject targeted brand section based on task — full bible only for campaigns
+    if (isCampaign) {
+      systemPrompt += `\n\n---\n${BRAND_KNOWLEDGE}\n\n---\n${LONGHORN_BRAND_KNOWLEDGE}\n\n---\n${MARKETING_RULES}`;
+    } else if (isPhotoTask) {
+      systemPrompt += `\n\n---\n${KANA_BRAND_FOR_PHOTO}`;
+    } else {
+      systemPrompt += `\n\n---\n${KANA_BRAND_FOR_POST}`;
+    }
+
+    // Only inject Tim insights for actual content creation — 2 items, 100 chars max each
     if (isContentRequest) {
-      const recentInsights = await getRecentTimInsights(5, null, 7);
+      const recentInsights = await getRecentTimInsights(2, null, 7);
       if (recentInsights.length > 0) {
         const insightBlock = recentInsights
-          .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 400)}`)
-          .join('\n\n');
-        systemPrompt += `\n\n---\n## Последние данные от Тима (последние 7 дней)\n${insightBlock}`;
+          .map(r => `[${r.insight_type}] ${r.content.slice(0, 100)}`)
+          .join('\n');
+        systemPrompt += `\n\n## Данные от Тима\n${insightBlock}`;
       } else if (needsMarketData) {
-        // No Tim data in DB — trigger a web search pass to gather it
         bot.sendMessage(chatId, '🔗 *Кана:* Данных от Тима нет. Запрашиваю свежие данные рынка...', { parse_mode: 'Markdown' }).catch(() => {});
         kanaForcedSearch = true;
       }
@@ -1452,19 +1440,19 @@ async function askClaude(chatId, userMessage, overrideAgentId = null) {
   }
   if (agentId === 'пятница') {
     const [insights, kanaContent] = await Promise.all([
-      getRecentTimInsights(4),
-      getRecentKanaContent(4),
+      getRecentTimInsights(2),
+      getRecentKanaContent(2),
     ]);
     let crossAgentBlock = '';
     if (insights.length > 0) {
-      crossAgentBlock += '\n\n### Последние данные от Тима\n' + insights
-        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.insight_type}] ${r.content.slice(0, 300)}`)
-        .join('\n\n');
+      crossAgentBlock += '\n\n### Тим (последние данные)\n' + insights
+        .map(r => `[${r.insight_type}] ${r.content.slice(0, 120)}`)
+        .join('\n');
     }
     if (kanaContent.length > 0) {
-      crossAgentBlock += '\n\n### Последний контент от Каны\n' + kanaContent
-        .map(r => `[${new Date(r.created_at).toLocaleDateString('ru-RU')} | ${r.content_type} | ${r.approved ? 'одобрено' : 'не одобрено'}] ${r.text.slice(0, 200)}`)
-        .join('\n\n');
+      crossAgentBlock += '\n\n### Кана (последний контент)\n' + kanaContent
+        .map(r => `[${r.content_type}] ${r.text.slice(0, 100)}`)
+        .join('\n');
     }
     if (crossAgentBlock) systemPrompt += `\n\n---\n## Данные агентов${crossAgentBlock}`;
   }
